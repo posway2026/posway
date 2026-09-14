@@ -5,6 +5,13 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
+const RESOLUTION_LABELS = {
+  writeoff: "Hisobdan chiqarildi",
+  restock: "Qoldiqqa qaytarildi",
+  mixed: "Qisman qaytarildi / hisobdan chiqarildi",
+  forgiven: "Qarz kechirildi",
+};
+
 export default function Customers() {
   const [customers, setCustomers] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
@@ -17,6 +24,10 @@ export default function Customers() {
   const [oldDebtAmount, setOldDebtAmount] = useState('');
   const [oldDebtDate, setOldDebtDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [oldDebtNote, setOldDebtNote] = useState('');
+  const [closeDebtModal, setCloseDebtModal] = useState(null);
+  const [closeDebtItems, setCloseDebtItems] = useState([]);
+  const [closeDebtConditions, setCloseDebtConditions] = useState({});
+  const [closeDebtBusy, setCloseDebtBusy] = useState(false);
 
   function load() {
     api.listCustomers().then(setCustomers);
@@ -63,6 +74,48 @@ export default function Customers() {
     }
   }
 
+  async function handleRestore(c) {
+    if (!confirm(`"${c.full_name}" mijozni qayta faollashtirasizmi?`)) return;
+    try {
+      await api.restoreCustomer(c.id);
+      load();
+    } catch (e) {
+      alert(e.message || 'Tiklashda xatolik yuz berdi');
+    }
+  }
+
+  // (yangi) "Qarzni yopish" oynasini ochish — sotuvning mahsulot
+  // bandlarini (agar bo'lsa) yuklab olamiz, shunda har biri uchun
+  // "qoldiqqa qaytarish" yoki "hisobdan chiqarish" tanlash mumkin.
+  async function openCloseDebt(sale) {
+    setCloseDebtBusy(false);
+    setCloseDebtConditions({});
+    setCloseDebtModal(sale);
+    try {
+      const { items } = await api.getSale(sale.id);
+      setCloseDebtItems(items || []);
+    } catch (e) {
+      setCloseDebtItems([]);
+    }
+  }
+
+  async function handleCloseDebt(e) {
+    e.preventDefault();
+    setCloseDebtBusy(true);
+    try {
+      await api.closeSaleDebt(closeDebtModal.id, closeDebtConditions);
+      setCloseDebtModal(null);
+      setCloseDebtItems([]);
+      setCloseDebtConditions({});
+      if (detail) await openDetail(detail.customer);
+      load();
+    } catch (err) {
+      alert(err.message || "Qarzni yopishda xatolik yuz berdi");
+    } finally {
+      setCloseDebtBusy(false);
+    }
+  }
+
   return (
     <div>
       <div className="topbar">
@@ -75,30 +128,39 @@ export default function Customers() {
           <thead><tr><th>Ism</th><th>Telefon</th><th>Qarzi</th><th></th></tr></thead>
           <tbody>
             {customers.map((c) => (
-              <tr key={c.id}>
-                <td>{c.full_name}</td>
+              <tr key={c.id} style={c.is_deleted ? { opacity: 0.5 } : undefined}>
+                <td>
+                  {c.full_name}
+                  {c.is_deleted && <span className="badge" style={{ fontSize: 10, marginLeft: 6 }}>O'chirilgan</span>}
+                </td>
                 <td>{c.phone}</td>
                 <td>
                   <span className={`badge ${c.current_debt > 0 ? 'red' : 'green'}`}>{money(c.current_debt)}</span>
                 </td>
                 <td style={{ display: 'flex', gap: 6 }}>
                   <button className="btn secondary" onClick={() => openDetail(c)}>Tarix</button>
-                  {c.current_debt > 0 && <button className="btn" onClick={() => { setPayModal(c); setPayMethod('naqd'); }}>To'lov qabul qilish</button>}
-                  <button className="btn secondary" onClick={() => setOldDebtModal(c)}>Eski qarz qo'shish</button>
-                  <button
-                    className="btn danger"
-                    onClick={async () => {
-                      if (!confirm(`"${c.full_name}" mijozni o'chirishni xohlaysizmi?`)) return;
-                      try {
-                        await api.deleteCustomer(c.id);
-                        load();
-                      } catch (e) {
-                        alert(e.message || 'O\'chirishda xatolik yuz berdi');
-                      }
-                    }}
-                  >
-                    O'chirish
-                  </button>
+                  {c.is_deleted ? (
+                    <button className="btn secondary" onClick={() => handleRestore(c)}>Tiklash</button>
+                  ) : (
+                    <>
+                      {c.current_debt > 0 && <button className="btn" onClick={() => { setPayModal(c); setPayMethod('naqd'); }}>To'lov qabul qilish</button>}
+                      <button className="btn secondary" onClick={() => setOldDebtModal(c)}>Eski qarz qo'shish</button>
+                      <button
+                        className="btn danger"
+                        onClick={async () => {
+                          if (!confirm(`"${c.full_name}" mijozni faol ro'yxatdan olib tashlaysizmi? (Qarzi bo'lsa avval yopilishi kerak; sotuv tarixi baribir saqlanib qoladi, ro'yxatda xiraroq ko'rinib turadi)`)) return;
+                          try {
+                            await api.deleteCustomer(c.id);
+                            load();
+                          } catch (e) {
+                            alert(e.message || 'O\'chirishda xatolik yuz berdi');
+                          }
+                        }}
+                      >
+                        O'chirish
+                      </button>
+                    </>
+                  )}
                 </td>
               </tr>
             ))}
@@ -178,21 +240,34 @@ export default function Customers() {
 
       {detail && (
         <div className="modal-overlay" onClick={() => setDetail(null)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620 }}>
             <h3 style={{ marginTop: 0 }}>{detail.customer.full_name} — tarix</h3>
             <h4>Xaridlar</h4>
             <table>
-              <thead><tr><th>Sana</th><th>Jami</th><th>To'langan</th><th>Qarz</th><th></th></tr></thead>
+              <thead><tr><th>Sana</th><th>Jami</th><th>To'langan</th><th>Qarz qoldig'i</th><th></th></tr></thead>
               <tbody>
-                {detail.sales.map((s) => (
-                  <tr key={s.id}>
-                    <td>{new Date(s.created_at).toLocaleDateString('uz-UZ')}</td>
-                    <td>{money(s.total_amount)}</td>
-                    <td>{money(s.paid_amount)}</td>
-                    <td>{money(s.debt_amount)}</td>
-                    <td>{s.is_manual_debt && <span className="badge" style={{ fontSize: 10 }}>Eski qarz</span>}</td>
-                  </tr>
-                ))}
+                {detail.sales.map((s) => {
+                  const remaining = Number(s.debt_remaining ?? s.debt_amount ?? 0);
+                  return (
+                    <tr key={s.id}>
+                      <td>{new Date(s.created_at).toLocaleDateString('uz-UZ')}</td>
+                      <td>{money(s.total_amount)}</td>
+                      <td>{money(s.paid_amount)}</td>
+                      <td>{money(remaining)}</td>
+                      <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {s.is_manual_debt && <span className="badge" style={{ fontSize: 10 }}>Eski qarz</span>}
+                        {remaining > 0 && (
+                          <button className="btn secondary" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => openCloseDebt(s)}>
+                            Qarzni yopish
+                          </button>
+                        )}
+                        {remaining <= 0 && s.debt_resolution && (
+                          <span className="badge" style={{ fontSize: 10 }}>{RESOLUTION_LABELS[s.debt_resolution] || s.debt_resolution}</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
                 {detail.sales.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--text-dim)' }}>Xaridlar yo'q</td></tr>}
               </tbody>
             </table>
@@ -208,6 +283,48 @@ export default function Customers() {
             </table>
             <button className="btn secondary" style={{ width: '100%', marginTop: 10 }} onClick={() => setDetail(null)}>Yopish</button>
           </div>
+        </div>
+      )}
+
+      {closeDebtModal && (
+        <div className="modal-overlay" onClick={() => !closeDebtBusy && setCloseDebtModal(null)}>
+          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleCloseDebt}>
+            <h3 style={{ marginTop: 0 }}>Qarzni yopish</h3>
+            <div className="form-row">
+              <label>
+                {new Date(closeDebtModal.created_at).toLocaleDateString('uz-UZ')} sanadagi xarid — qarz qoldig'i: {money(closeDebtModal.debt_remaining ?? closeDebtModal.debt_amount)}
+              </label>
+            </div>
+
+            {closeDebtItems.length > 0 ? (
+              <>
+                <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 8 }}>
+                  Mijoz to'lamagan mahsulot(lar) uchun har birini qayerga qo'yishni tanlang: yaroqli bo'lsa qoldiqqa qaytariladi, yaroqsiz/yo'q bo'lsa hisobdan chiqariladi (zarar sifatida qayd etiladi).
+                </div>
+                {closeDebtItems.map((it) => (
+                  <div className="form-row" key={it.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span>{it.product_name} × {it.quantity}</span>
+                    <select
+                      value={closeDebtConditions[it.id] || 'sellable'}
+                      onChange={(e) => setCloseDebtConditions({ ...closeDebtConditions, [it.id]: e.target.value })}
+                    >
+                      <option value="sellable">Qoldiqqa qaytarish</option>
+                      <option value="defective">Hisobdan chiqarish (zarar)</option>
+                    </select>
+                  </div>
+                ))}
+              </>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>
+                Bu qo'lda kiritilgan eski qarz (mahsulot bog'lanmagan). Uni yopish shu qarzni kechirish (hisobdan chiqarish) degani bo'ladi.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+              <button type="button" className="btn secondary" style={{ flex: 1 }} disabled={closeDebtBusy} onClick={() => setCloseDebtModal(null)}>Bekor qilish</button>
+              <button className="btn" style={{ flex: 1 }} disabled={closeDebtBusy}>Tasdiqlash</button>
+            </div>
+          </form>
         </div>
       )}
     </div>
