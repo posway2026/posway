@@ -4,15 +4,37 @@ import { authRequired, roleRequired } from '../middleware/auth.js';
 
 const router = Router();
 
+// (yangi) Mijozning joriy qarzini endi har bir sotuvning debt_remaining
+// (FIFO to'lovlar orqali yangilanib boruvchi, joriy qoldiq) maydonlari
+// yig'indisi sifatida hisoblaymiz. Avvalgi usul (debt_amount yig'indisi
+// minus debt_payments yig'indisi) "Qarzni yopish" (hisobdan chiqarish
+// yoki mahsulotni qaytarib olish) orqali yopilgan qarzni hisobga
+// olmasdi — chunki bunday yopilish debt_payments jadvaliga yozuv
+// qo'shmaydi, faqat tegishli sotuvning debt_remaining'ini to'g'ridan-
+// to'g'ri nolga tushiradi (sales.js /:id/close-debt).
+function currentDebtFor(data, customerId) {
+  return data.sales
+    .filter((s) => s.customer_id == customerId)
+    .reduce((sum, s) => sum + Number(s.debt_remaining ?? s.debt_amount ?? 0), 0);
+}
+
 function withDebt(data, c) {
-  const totalDebt = data.sales.filter((s) => s.customer_id == c.id).reduce((sum, s) => sum + s.debt_amount, 0);
-  const totalPaid = data.debt_payments.filter((p) => p.customer_id == c.id).reduce((sum, p) => sum + p.amount, 0);
-  return { ...c, current_debt: totalDebt - totalPaid };
+  return { ...c, current_debt: currentDebtFor(data, c.id) };
 }
 
 router.get('/', authRequired, (req, res) => {
   const data = readData();
-  const rows = data.customers.map((c) => withDebt(data, c)).sort((a, b) => a.full_name.localeCompare(b.full_name));
+  // (yangi) "O'chirilgan" (is_deleted) mijozlar ham ro'yxatda ko'rsatiladi
+  // (frontend ularni xiraroq va "O'chirilgan" belgisi bilan chizadi) —
+  // shunda ularning avvalgi mavjudligi va tarixi ko'zdan yo'qolmaydi,
+  // faqat ular bilan yangi ish (to'lov qabul qilish, eski qarz qo'shish)
+  // qilib bo'lmaydi. Bazadan esa hech qachon fizik o'chirilmaydi.
+  const rows = data.customers
+    .map((c) => withDebt(data, c))
+    .sort((a, b) => {
+      if (!!a.is_deleted !== !!b.is_deleted) return a.is_deleted ? 1 : -1;
+      return a.full_name.localeCompare(b.full_name);
+    });
   res.json(rows);
 });
 
@@ -126,18 +148,42 @@ router.post('/:id/old-debt', authRequired, (req, res) => {
   res.json({ success: true, id: saleId });
 });
 
+// (yangi) Mijozni o'chirish endi haqiqiy sotuv tarixini hech qachon
+// yo'q qilmaydi. Agar qarzi bo'lsa — o'chirish taqiqlanadi (avval qarz
+// to'liq yopilishi yoki hisobdan chiqarilishi kerak). Qarzi yo'q bo'lsa —
+// yozuv bazadan o'chirilmaydi, faqat is_deleted=true qilib "yashiriladi":
+// shu orqali barcha eski sotuvlari, chek tafsilotlari va Hisobotlar/foyda
+// hisob-kitoblari o'zgarmay qoladi, faqat mijoz faol ro'yxatdan chiqib
+// ketadi (avval bu yerda hammasi — hatto to'liq to'langan eski xaridlar
+// ham — butunlay va qaytarib bo'lmaydigan tarzda o'chirilardi).
 router.delete('/:id', authRequired, roleRequired('admin'), (req, res) => {
   const data = readData();
   const customerId = Number(req.params.id);
+  const customer = data.customers.find((c) => c.id === customerId);
+  if (!customer) return res.status(404).json({ error: 'Mijoz topilmadi' });
 
-  data.debt_payments = data.debt_payments.filter((p) => p.customer_id != customerId);
-  data.sales = data.sales.filter((s) => s.customer_id != customerId);
-  data.sale_items = data.sale_items.filter((item) => {
-    const sale = data.sales.find((s) => s.id == item.sale_id);
-    return !sale || sale.customer_id != customerId;
-  });
-  data.customers = data.customers.filter((c) => c.id != customerId);
+  const debt = currentDebtFor(data, customerId);
+  if (debt > 0) {
+    return res.status(400).json({
+      error: `Bu mijozning ${Math.round(debt).toLocaleString('uz-UZ')} so'm qarzi bor — avval to'liq to'lov qabul qiling yoki "Tarix" oynasida har bir qarzli xarid uchun "Qarzni yopish" orqali (mahsulotni qoldiqqa qaytarish yoki hisobdan chiqarish) qarzni yoping, keyin o'chirishingiz mumkin.`,
+    });
+  }
 
+  customer.is_deleted = true;
+  customer.deleted_at = new Date().toISOString();
+
+  writeData(data);
+  res.json({ success: true });
+});
+
+// (yangi) Xato bosilgan yoki fikr o'zgargan "o'chirish"ni bekor qilish —
+// mijozni qayta faollashtiradi, hech qanday tarix o'zgarmagan edi.
+router.post('/:id/restore', authRequired, roleRequired('admin'), (req, res) => {
+  const data = readData();
+  const customer = data.customers.find((c) => c.id == req.params.id);
+  if (!customer) return res.status(404).json({ error: 'Mijoz topilmadi' });
+  customer.is_deleted = false;
+  customer.deleted_at = null;
   writeData(data);
   res.json({ success: true });
 });
