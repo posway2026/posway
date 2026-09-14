@@ -18,8 +18,9 @@ function emptyData() {
     supplier_debts: [],
     supplier_debt_payments: [],
     cash_closes: [],
+    stock_writeoffs: [],
     meta: {},
-    seq: { users: 0, products: 0, customers: 0, sales: 0, sale_items: 0, debt_payments: 0, cash_movements: 0, supplier_debts: 0, supplier_debt_payments: 0, cash_closes: 0 },
+    seq: { users: 0, products: 0, customers: 0, sales: 0, sale_items: 0, debt_payments: 0, cash_movements: 0, supplier_debts: 0, supplier_debt_payments: 0, cash_closes: 0, stock_writeoffs: 0 },
   };
 }
 
@@ -35,11 +36,15 @@ function normalize(data) {
   normalized.supplier_debts = Array.isArray(normalized.supplier_debts) ? normalized.supplier_debts : [];
   normalized.supplier_debt_payments = Array.isArray(normalized.supplier_debt_payments) ? normalized.supplier_debt_payments : [];
   normalized.cash_closes = Array.isArray(normalized.cash_closes) ? normalized.cash_closes : [];
+  // (33) Yaroqsiz/nosozligi sababli qoldiqqa qaytarilmay, o'sha zahoti
+  // hisobdan chiqarilgan mahsulotlar tarixi (qaytarish amali ichida).
+  normalized.stock_writeoffs = Array.isArray(normalized.stock_writeoffs) ? normalized.stock_writeoffs : [];
   normalized.seq = { ...emptyData().seq, ...(data.seq || {}) };
   normalized.seq.cash_movements = normalized.seq.cash_movements || 0;
   normalized.seq.supplier_debts = normalized.seq.supplier_debts || 0;
   normalized.seq.supplier_debt_payments = normalized.seq.supplier_debt_payments || 0;
   normalized.seq.cash_closes = normalized.seq.cash_closes || 0;
+  normalized.seq.stock_writeoffs = normalized.seq.stock_writeoffs || 0;
 
   normalized.products = normalized.products.map((product) => ({
     ...product,
