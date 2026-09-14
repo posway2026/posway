@@ -22,8 +22,14 @@ router.get('/dashboard', authRequired, (req, res) => {
     return d >= monthStart && d <= monthEnd;
   });
 
-  const totalDebtRaw = currentSales.reduce((sum, s) => sum + Number(s.debt_amount || 0), 0);
-  const totalPaidDebt = (data.debt_payments || []).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  // (yangi) Umumiy qarzdorlikni endi har bir sotuvning debt_remaining
+  // (joriy, FIFO to'lovlar orqali yangilanib boruvchi qoldiq) yig'indisi
+  // sifatida hisoblaymiz. Avvalgi usul (debt_amount yig'indisi minus
+  // debt_payments yig'indisi) qarzni "Qarzni yopish" (hisobdan chiqarish/
+  // qaytarish) orqali yopilganda noto'g'ri hisoblardi — chunki bunday
+  // yopilish debt_payments jadvaliga yozuv qo'shmaydi, faqat sale.debt_remaining
+  // ni to'g'ridan-to'g'ri nolga tushiradi.
+  const totalDebt = currentSales.reduce((sum, s) => sum + Number(s.debt_remaining ?? s.debt_amount ?? 0), 0);
 
   const lowStockCount = (data.products || []).filter((p) => Number(p.quantity || 0) <= Number(p.min_quantity || 0)).length;
 
@@ -88,7 +94,7 @@ router.get('/dashboard', authRequired, (req, res) => {
     cashOnHand,
     cardOnHand,
     monthSales: { total: monthSalesArr.reduce((s, x) => s + Number(x.total_amount || 0), 0), count: monthSalesArr.length },
-    totalDebt: totalDebtRaw - totalPaidDebt,
+    totalDebt,
     lowStockCount,
     productTypeCount: (data.products || []).length,
     productUnitCount: (data.products || []).reduce((sum, p) => sum + (Number(p.quantity) || 0), 0),
