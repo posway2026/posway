@@ -45,7 +45,16 @@ export default function Pos() {
   const [customerDropdownOpen, setCustomerDropdownOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddForm, setQuickAddForm] = useState({ full_name: '', phone: '' });
-  const [paidAmount, setPaidAmount] = useState(saved?.paidAmount || '');
+  // (34) Qarzga sotishda "hozir to'langan" summa endi naqd va karta
+  // o'rtasida bo'linishi mumkin — shuning uchun bitta paidAmount o'rniga
+  // ikkita alohida maydon.
+  const [debtPaidNaqd, setDebtPaidNaqd] = useState(saved?.debtPaidNaqd || '');
+  const [debtPaidKarta, setDebtPaidKarta] = useState(saved?.debtPaidKarta || '');
+  // (34) Aralash to'lov (qarzsiz, to'liq to'langan, lekin naqd+karta
+  // o'rtasida bo'lingan) uchun alohida mini-forma.
+  const [mixedOpen, setMixedOpen] = useState(saved?.mixedOpen || false);
+  const [mixedNaqd, setMixedNaqd] = useState(saved?.mixedNaqd || '');
+  const [mixedKarta, setMixedKarta] = useState(saved?.mixedKarta || '');
   const [message, setMessage] = useState('');
   const [editingPriceId, setEditingPriceId] = useState(null);
   const [discountType, setDiscountType] = useState(saved?.discountType || 'none');
@@ -60,8 +69,19 @@ export default function Pos() {
   // Savatni har o'zgarishda saqlab boramiz — mijoz qo'shish uchun boshqa
   // sahifaga o'tib qaytilsa ham, savat mazmuni yo'qolmasin.
   useEffect(() => {
-    saveCart({ cart, customerId, customerSearch, paidAmount, discountType, discountValue });
-  }, [cart, customerId, customerSearch, paidAmount, discountType, discountValue]);
+    saveCart({
+      cart,
+      customerId,
+      customerSearch,
+      discountType,
+      discountValue,
+      debtPaidNaqd,
+      debtPaidKarta,
+      mixedOpen,
+      mixedNaqd,
+      mixedKarta,
+    });
+  }, [cart, customerId, customerSearch, discountType, discountValue, debtPaidNaqd, debtPaidKarta, mixedOpen, mixedNaqd, mixedKarta]);
 
   // Mijoz tanlash oynasidan tashqariga bosilsa, ro'yxat yopiladi.
   useEffect(() => {
@@ -167,16 +187,31 @@ export default function Pos() {
     }
   }
 
-  async function handleCheckout(payment_type) {
+  // (34) `mode` — 'naqd' | 'karta' | 'aralash' | 'qarz'. Har birida
+  // "hozir to'langan" summa naqd/karta ulushiga bo'linib backendga
+  // yuboriladi; qarz qoldig'i (agar bo'lsa) serverda avtomatik hisoblanadi.
+  async function handleCheckout(mode) {
     setMessage('');
     if (cart.length === 0) return;
     try {
-      const paid = payment_type === 'qarz' ? (paidAmount === '' ? 0 : +paidAmount) : total;
+      let paidNaqd = 0;
+      let paidKarta = 0;
+      if (mode === 'naqd') {
+        paidNaqd = total;
+      } else if (mode === 'karta') {
+        paidKarta = total;
+      } else if (mode === 'aralash') {
+        paidNaqd = Number(mixedNaqd) || 0;
+        paidKarta = Number(mixedKarta) || 0;
+      } else if (mode === 'qarz') {
+        paidNaqd = debtPaidNaqd === '' ? 0 : Number(debtPaidNaqd) || 0;
+        paidKarta = debtPaidKarta === '' ? 0 : Number(debtPaidKarta) || 0;
+      }
       await api.createSale({
         customer_id: customerId || null,
         items: cart.map(({ product_id, product_name, quantity, unit_price }) => ({ product_id, product_name, quantity, unit_price })),
-        paid_amount: paid,
-        payment_type,
+        paid_naqd: paidNaqd,
+        paid_karta: paidKarta,
         discount_type: discountType === 'none' ? null : discountType,
         discount_value: discountType === 'none' ? 0 : Number(discountValue) || 0,
       });
@@ -184,7 +219,11 @@ export default function Pos() {
       setCart([]);
       setCustomerId('');
       setCustomerSearch('');
-      setPaidAmount('');
+      setDebtPaidNaqd('');
+      setDebtPaidKarta('');
+      setMixedOpen(false);
+      setMixedNaqd('');
+      setMixedKarta('');
       setDiscountType('none');
       setDiscountValue('');
       clearSavedCart();
@@ -398,9 +437,94 @@ export default function Pos() {
             <button className="btn" style={{ flex: 1 }} onClick={() => handleCheckout('karta')} disabled={cart.length === 0}>💳 Karta</button>
           </div>
 
+          {/* (34) Aralash to'lov — chekni naqd va karta o'rtasida bo'lib to'lash. */}
+          <div style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn secondary"
+              style={{ width: '100%' }}
+              disabled={cart.length === 0}
+              onClick={() => {
+                if (!mixedOpen && !mixedNaqd && !mixedKarta) {
+                  setMixedNaqd(String(total));
+                  setMixedKarta('0');
+                }
+                setMixedOpen((v) => !v);
+              }}
+            >
+              🔀 Aralash to'lov (naqd + karta)
+            </button>
+            {mixedOpen && (
+              <div className="card" style={{ marginTop: 8, background: 'var(--panel-light)' }}>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                    <label>💵 Naqd</label>
+                    <input
+                      type="number"
+                      value={mixedNaqd}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMixedNaqd(v);
+                        setMixedKarta(String(Math.max(0, total - (Number(v) || 0))));
+                      }}
+                    />
+                  </div>
+                  <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                    <label>💳 Karta</label>
+                    <input
+                      type="number"
+                      value={mixedKarta}
+                      onFocus={(e) => e.target.select()}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setMixedKarta(v);
+                        setMixedNaqd(String(Math.max(0, total - (Number(v) || 0))));
+                      }}
+                    />
+                  </div>
+                </div>
+                <div style={{ fontSize: 12, color: (Number(mixedNaqd) || 0) + (Number(mixedKarta) || 0) === total ? 'var(--text-dim)' : 'var(--red)', marginBottom: 8 }}>
+                  Jami: {money((Number(mixedNaqd) || 0) + (Number(mixedKarta) || 0))} / {money(total)}
+                  {(Number(mixedNaqd) || 0) + (Number(mixedKarta) || 0) !== total && ' — summalar mos kelmayapti'}
+                </div>
+                <button
+                  className="btn"
+                  style={{ width: '100%' }}
+                  disabled={cart.length === 0 || (Number(mixedNaqd) || 0) + (Number(mixedKarta) || 0) !== total}
+                  onClick={() => handleCheckout('aralash')}
+                >
+                  Aralash to'lovni tasdiqlash
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* (34) Qarzga sotishda "hozir to'langan" qismini ham naqd/karta
+              bo'yicha aniqlashtirish mumkin — kassa hisobi adashmasin. */}
           <div className="form-row" style={{ marginTop: 12 }}>
-            <label>Qarzga sotish — to'langan summa</label>
-            <input type="number" placeholder="0" value={paidAmount} onFocus={(e) => e.target.select()} onChange={(e) => setPaidAmount(e.target.value)} />
+            <label>Qarzga sotish — hozir to'langan summa</label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="number"
+                placeholder="💵 Naqd"
+                value={debtPaidNaqd}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setDebtPaidNaqd(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              <input
+                type="number"
+                placeholder="💳 Karta"
+                value={debtPaidKarta}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => setDebtPaidKarta(e.target.value)}
+                style={{ flex: 1 }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+              Qarzga qoladi: {money(Math.max(0, total - (Number(debtPaidNaqd) || 0) - (Number(debtPaidKarta) || 0)))}
+            </div>
             <button className="btn secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => handleCheckout('qarz')} disabled={cart.length === 0 || !customerId}>
               📒 Qarzga yozish
             </button>
