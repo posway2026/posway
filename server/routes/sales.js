@@ -123,24 +123,59 @@ router.get('/:id', authRequired, (req, res) => {
   res.json({ sale, items });
 });
 
+// (33) Sotuvni qaytarish/bekor qilish. Har bir mahsulot uchun holatini
+// tanlash mumkin — frontend `itemConditions: { [sale_item_id]: 'defective' }`
+// ko'rinishida yuboradi (ko'rsatilmagan yoki 'sellable' bo'lgan har qanday
+// band — standart, eski xatti-harakat bilan bir xil: qoldiqqa qaytariladi).
+// 'defective' deb belgilangan band esa QOLDIQQA QAYTARILMAYDI — o'rniga
+// bitta amal ichida, qo'shimcha qadamsiz, avtomatik hisobdan chiqariladi
+// (stock_writeoffs jadvaliga yoziladi).
 router.delete('/:id', authRequired, (req, res) => {
   const data = readData();
   const sale = data.sales.find((s) => s.id == req.params.id);
   if (!sale) return res.status(404).json({ error: 'Sotuv topilmadi' });
 
+  const itemConditions = (req.body && typeof req.body.itemConditions === 'object' && req.body.itemConditions) || {};
+  if (!Array.isArray(data.stock_writeoffs)) data.stock_writeoffs = [];
+  const now = new Date().toISOString();
+  const writtenOff = [];
+
   for (const it of data.sale_items.filter((item) => item.sale_id == req.params.id)) {
     const product = data.products.find((p) => p.id == it.product_id);
+    const isDefective = itemConditions[it.id] === 'defective';
+
     if (product) {
-      product.quantity += Number(it.quantity || 0);
       product.sold_count = Math.max(0, Number(product.sold_count || 0) - Number(it.quantity || 0));
       product.sales_count = Math.max(0, Number(product.sales_count || 0) - Number(it.quantity || 0));
+
+      if (!isDefective) {
+        product.quantity += Number(it.quantity || 0);
+      } else {
+        const unitCost = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
+        const quantity = Number(it.quantity || 0);
+        const writeoffId = nextId(data, 'stock_writeoffs');
+        data.stock_writeoffs.push({
+          id: writeoffId,
+          sale_id: sale.id,
+          sale_item_id: it.id,
+          product_id: product.id,
+          product_name: it.product_name || product.name,
+          quantity,
+          unit_cost: unitCost,
+          total_cost: unitCost * quantity,
+          reason: 'qaytarish_yaroqsiz',
+          user_id: req.user.id,
+          created_at: now,
+        });
+        writtenOff.push({ product_name: it.product_name || product.name, quantity });
+      }
     }
   }
 
   data.sale_items = data.sale_items.filter((item) => item.sale_id != req.params.id);
   data.sales = data.sales.filter((s) => s.id != req.params.id);
   writeData(data);
-  res.json({ success: true });
+  res.json({ success: true, writtenOff });
 });
 
 export default router;
