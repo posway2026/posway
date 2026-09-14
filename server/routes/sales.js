@@ -224,4 +224,76 @@ router.delete('/:id', authRequired, (req, res) => {
   res.json({ success: true, writtenOff });
 });
 
+// (yangi) Qarzni yopish — mijoz to'lamay qolgan (masalan mijoz
+// o'chirilishidan oldin) sotuvning qarz qoldig'ini yopish uchun.
+// Yuqoridagi DELETE /:id (33) dan farqli o'laroq, bu YO'Q QILMAYDI —
+// sotuv yozuvi va uning tarixi (chek, summalar) butunlay saqlanib
+// qoladi, faqat: (1) har bir tovar-band uchun holati bo'yicha —
+// 'sellable' bo'lsa qoldiqqa qaytariladi, 'defective' bo'lsa
+// hisobdan chiqariladi (stock_writeoffs) — ombor to'g'irlanadi, va
+// (2) sotuvning debt_remaining'i nolga tushiriladi (shu bilan
+// "kutilayotgan foyda" hisobidan ham avtomatik chiqib ketadi, chunki
+// /profit formulasi margin * debt_remaining/total_amount ko'rinishida).
+// Mahsulotsiz (qo'lda kiritilgan eski qarz, is_manual_debt) sotuvlarda
+// sale_items bo'lmaydi — bunday holda shunchaki qarz kechiriladi.
+router.post('/:id/close-debt', authRequired, (req, res) => {
+  const data = readData();
+  const sale = data.sales.find((s) => s.id == req.params.id);
+  if (!sale) return res.status(404).json({ error: 'Sotuv topilmadi' });
+
+  const remaining = Number(sale.debt_remaining ?? sale.debt_amount ?? 0);
+  if (remaining <= 0) return res.status(400).json({ error: "Bu xariddan qarz qoldig'i yo'q" });
+
+  const itemConditions = (req.body && typeof req.body.itemConditions === 'object' && req.body.itemConditions) || {};
+  if (!Array.isArray(data.stock_writeoffs)) data.stock_writeoffs = [];
+  const now = new Date().toISOString();
+  const writtenOff = [];
+  let restockedCount = 0;
+  let writtenOffCount = 0;
+
+  for (const it of data.sale_items.filter((item) => item.sale_id == sale.id)) {
+    const product = data.products.find((p) => p.id == it.product_id);
+    const isDefective = itemConditions[it.id] === 'defective';
+    if (!product) continue;
+
+    if (!isDefective) {
+      product.quantity += Number(it.quantity || 0);
+      restockedCount++;
+    } else {
+      const unitCost = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
+      const quantity = Number(it.quantity || 0);
+      const writeoffId = nextId(data, 'stock_writeoffs');
+      data.stock_writeoffs.push({
+        id: writeoffId,
+        sale_id: sale.id,
+        sale_item_id: it.id,
+        product_id: product.id,
+        product_name: it.product_name || product.name,
+        quantity,
+        unit_cost: unitCost,
+        total_cost: unitCost * quantity,
+        reason: 'qarz_yopish',
+        user_id: req.user.id,
+        created_at: now,
+      });
+      writtenOff.push({ product_name: it.product_name || product.name, quantity });
+      writtenOffCount++;
+    }
+  }
+
+  sale.debt_remaining = 0;
+  sale.debt_closed_at = now;
+  sale.debt_closed_by = req.user.id;
+  sale.debt_resolution = writtenOffCount > 0 && restockedCount > 0
+    ? 'mixed'
+    : writtenOffCount > 0
+      ? 'writeoff'
+      : restockedCount > 0
+        ? 'restock'
+        : 'forgiven';
+
+  writeData(data);
+  res.json({ success: true, writtenOff, resolution: sale.debt_resolution });
+});
+
 export default router;
