@@ -50,8 +50,9 @@ export const api = {
   deleteSupplierDebtEntry: (id) => request(`/supplier-debts/debt/${id}`, { method: 'DELETE' }),
 
   listSales: (from, to) => request(`/sales${from && to ? `?from=${from}&to=${to}` : ''}`),
+  getSale: (id) => request(`/sales/${id}`),
   createSale: (payload) => request('/sales', { method: 'POST', body: JSON.stringify(payload) }),
-  deleteSale: (id) => request(`/sales/${id}`, { method: 'DELETE' }),
+  deleteSale: (id, itemConditions) => request(`/sales/${id}`, { method: 'DELETE', body: JSON.stringify({ itemConditions: itemConditions || {} }) }),
 
   listCashMovements: () => request('/cash-movements'),
   createCashMovement: (payload) => request('/cash-movements', { method: 'POST', body: JSON.stringify(payload) }),
