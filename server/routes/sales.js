@@ -5,7 +5,7 @@ import { authRequired } from '../middleware/auth.js';
 const router = Router();
 
 router.post('/', authRequired, (req, res) => {
-  const { customer_id, items, paid_amount, payment_type, discount_type, discount_value } = req.body;
+  const { customer_id, items, paid_amount, payment_type, discount_type, discount_value, paid_naqd, paid_karta } = req.body;
   if (!items || items.length === 0) return res.status(400).json({ error: 'Mahsulot tanlanmagan' });
 
   const data = readData();
@@ -34,8 +34,42 @@ router.post('/', authRequired, (req, res) => {
   discount_amount = Math.min(subtotal_amount, Math.max(0, discount_amount));
   const total_amount = subtotal_amount - discount_amount;
 
-  const paid = paid_amount ?? total_amount;
+  // (34) Aralash to'lov: "hozir to'langan" summa endi naqd va karta
+  // o'rtasida bo'linishi mumkin (masalan 100,000 so'mlik chekni 70,000
+  // naqd + 30,000 karta qilib to'lash). Yangi frontend buni to'g'ridan-
+  // to'g'ri paid_naqd/paid_karta sifatida yuboradi — qarzga sotishda ham
+  // (hozir to'langan qismi bo'lsa) xuddi shunday. Agar ikkalasi ham
+  // yuborilmagan bo'lsa (eski, hali yangilanmagan frontend so'rovi) —
+  // avvalgi xatti-harakatni aynan takrorlaymiz: hammasi bitta turga
+  // ('karta' bo'lsa kartaga, aks holda naqdga) tegishli bo'ladi.
+  let paidNaqd = Number(paid_naqd) || 0;
+  let paidKarta = Number(paid_karta) || 0;
+  if (paid_naqd === undefined && paid_karta === undefined) {
+    const legacyPaid = Number(paid_amount ?? total_amount) || 0;
+    if (payment_type === 'karta') paidKarta = legacyPaid;
+    else paidNaqd = legacyPaid;
+  }
+  paidNaqd = Math.max(0, paidNaqd);
+  paidKarta = Math.max(0, paidKarta);
+  let paid = paidNaqd + paidKarta;
+  if (paid > total_amount && paid > 0) {
+    // Xato/ortiqcha kiritilgan bo'lsa, nisbatni saqlagan holda umumiy
+    // summaga cheklaymiz — manfiy yoki haddan tashqari qiymat chiqmasin.
+    paidNaqd = Math.round(paidNaqd * (total_amount / paid));
+    paidKarta = total_amount - paidNaqd;
+    paid = total_amount;
+  }
   const debt_amount = Math.max(0, total_amount - paid);
+
+  // Sotuvning umumiy "turi" — hisobotlarda va chekda ko'rsatish uchun.
+  // Qarz qoldig'i bo'lsa har doim 'qarz' (upfront qismning naqd/karta
+  // bo'linishidan qat'iy nazar); to'liq to'langan bo'lsa va ikkala tur
+  // ham ishlatilgan bo'lsa — 'aralash'.
+  let resolvedPaymentType;
+  if (debt_amount > 0) resolvedPaymentType = 'qarz';
+  else if (paidNaqd > 0 && paidKarta > 0) resolvedPaymentType = 'aralash';
+  else if (paidKarta > 0) resolvedPaymentType = 'karta';
+  else resolvedPaymentType = 'naqd';
 
   // (22) Sotuv vaqtida tan narxni "qulflab qo'yamiz" — mahsulotning
   // keyinchalik narxi o'zgarsa ham, shu sotuvning marjasi (foydasi)
@@ -62,11 +96,13 @@ router.post('/', authRequired, (req, res) => {
     discount_amount,
     total_amount,
     paid_amount: paid,
+    paid_naqd: paidNaqd,
+    paid_karta: paidKarta,
     debt_amount,
     debt_remaining: debt_amount,
     cost_amount,
     margin,
-    payment_type: debt_amount > 0 ? 'qarz' : payment_type || 'naqd',
+    payment_type: resolvedPaymentType,
     created_at: new Date().toISOString(),
   });
 
@@ -91,7 +127,17 @@ router.post('/', authRequired, (req, res) => {
   }
 
   writeData(data);
-  res.json({ id: saleId, subtotal_amount, discount_amount, total_amount, paid_amount: paid, debt_amount });
+  res.json({
+    id: saleId,
+    subtotal_amount,
+    discount_amount,
+    total_amount,
+    paid_amount: paid,
+    paid_naqd: paidNaqd,
+    paid_karta: paidKarta,
+    debt_amount,
+    payment_type: resolvedPaymentType,
+  });
 });
 
 router.get('/', authRequired, (req, res) => {
