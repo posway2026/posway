@@ -42,9 +42,14 @@ router.get('/dashboard', authRequired, (req, res) => {
     .sort((a, b) => b.total_qty - a.total_qty)
     .slice(0, 5);
 
-  const todayCash = todaySalesArr.filter((s) => s.payment_type === 'naqd').reduce((s, x) => s + Number(x.total_amount || 0), 0);
-  const todayCard = todaySalesArr.filter((s) => s.payment_type === 'karta').reduce((s, x) => s + Number(x.total_amount || 0), 0);
-  const todayDebt = todaySalesArr.filter((s) => s.payment_type === 'qarz').reduce((s, x) => s + Number(x.debt_amount || 0), 0);
+  // (34) Aralash to'lov tufayli bitta sotuv ham naqd, ham karta ulushiga
+  // ega bo'lishi mumkin — shuning uchun payment_type bo'yicha filtrlash
+  // o'rniga har bir sotuvning paid_naqd/paid_karta maydonlarini to'g'ridan-
+  // to'g'ri yig'amiz (bu qarzga qisman to'langan sotuvlarning upfront
+  // qismini ham to'g'ri hisobga oladi).
+  const todayCash = todaySalesArr.reduce((s, x) => s + Number(x.paid_naqd || 0), 0);
+  const todayCard = todaySalesArr.reduce((s, x) => s + Number(x.paid_karta || 0), 0);
+  const todayDebt = todaySalesArr.reduce((s, x) => s + Number(x.debt_amount || 0), 0);
 
   // (17) Kassada real qancha naqt/karta pul borligi — barcha davr bo'yicha:
   // savdodan kelgan pul + qarz to'lovlaridan kelgan pul − xarajatlar
@@ -53,20 +58,25 @@ router.get('/dashboard', authRequired, (req, res) => {
   // (28) Ta'minotchiga to'lov — kassadan chiqadigan haqiqiy pul, shuning
   // uchun bu ham cashOut/cardOut hisobiga kiradi; bekor qilingan
   // to'lovlar (cancelled: true) esa hisobga olinmaydi.
+  // (34) Sotuvdan kelgan naqt/karta ulushini endi payment_type bo'yicha
+  // filtrlash o'rniga har bir sotuvning paid_naqd/paid_karta maydonidan
+  // to'g'ridan-to'g'ri olamiz — bu aralash to'lovni va qarzga qisman
+  // to'langan upfront qismning haqiqiy (naqd/karta) tarkibini to'g'ri
+  // hisoblaydi (eski sotuvlar uchun store.js'dagi bir martalik migratsiya
+  // shu maydonlarni orqaga qarab to'ldirib qo'ygan).
   const allSales = currentSales;
   const allCashMovements = Array.isArray(data.cash_movements) ? data.cash_movements : [];
   const allDebtPayments = Array.isArray(data.debt_payments) ? data.debt_payments : [];
   const allSupplierPayments = (Array.isArray(data.supplier_debt_payments) ? data.supplier_debt_payments : [])
     .filter((p) => !p.cancelled);
 
-  const cashIn = allSales.filter((s) => s.payment_type === 'naqd').reduce((s, x) => s + Number(x.total_amount || 0), 0)
-    + allSales.filter((s) => s.payment_type === 'qarz').reduce((s, x) => s + Number(x.paid_amount || 0), 0)
+  const cashIn = allSales.reduce((s, x) => s + Number(x.paid_naqd || 0), 0)
     + allDebtPayments.filter((p) => (p.payment_method || 'naqd') === 'naqd').reduce((s, p) => s + Number(p.amount || 0), 0);
   const cashOut = allCashMovements.filter((m) => (m.payment_method || 'naqd') === 'naqd').reduce((s, m) => s + Number(m.amount || 0), 0)
     + allSupplierPayments.filter((p) => (p.payment_method || 'naqd') === 'naqd').reduce((s, p) => s + Number(p.amount || 0), 0);
   const cashOnHand = cashIn - cashOut;
 
-  const cardIn = allSales.filter((s) => s.payment_type === 'karta').reduce((s, x) => s + Number(x.total_amount || 0), 0)
+  const cardIn = allSales.reduce((s, x) => s + Number(x.paid_karta || 0), 0)
     + allDebtPayments.filter((p) => p.payment_method === 'karta').reduce((s, p) => s + Number(p.amount || 0), 0);
   const cardOut = allCashMovements.filter((m) => m.payment_method === 'karta').reduce((s, m) => s + Number(m.amount || 0), 0)
     + allSupplierPayments.filter((p) => p.payment_method === 'karta').reduce((s, p) => s + Number(p.amount || 0), 0);
