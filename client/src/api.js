@@ -37,6 +37,7 @@ export const api = {
   getCustomer: (id) => request(`/customers/${id}`),
   createCustomer: (payload) => request('/customers', { method: 'POST', body: JSON.stringify(payload) }),
   deleteCustomer: (id) => request(`/customers/${id}`, { method: 'DELETE' }),
+  restoreCustomer: (id) => request(`/customers/${id}/restore`, { method: 'POST' }),
   payDebt: (id, payload) => request(`/customers/${id}/pay`, { method: 'POST', body: JSON.stringify(payload) }),
   addOldDebt: (id, payload) => request(`/customers/${id}/old-debt`, { method: 'POST', body: JSON.stringify(payload) }),
 
@@ -53,6 +54,7 @@ export const api = {
   getSale: (id) => request(`/sales/${id}`),
   createSale: (payload) => request('/sales', { method: 'POST', body: JSON.stringify(payload) }),
   deleteSale: (id, itemConditions) => request(`/sales/${id}`, { method: 'DELETE', body: JSON.stringify({ itemConditions: itemConditions || {} }) }),
+  closeSaleDebt: (id, itemConditions) => request(`/sales/${id}/close-debt`, { method: 'POST', body: JSON.stringify({ itemConditions: itemConditions || {} }) }),
 
   listCashMovements: () => request('/cash-movements'),
   createCashMovement: (payload) => request('/cash-movements', { method: 'POST', body: JSON.stringify(payload) }),
