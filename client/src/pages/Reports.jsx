@@ -76,10 +76,14 @@ export default function Reports() {
     }
   }
 
+  // (34) Aralash to'lovda bitta sotuv ham naqd, ham karta ulushiga ega
+  // bo'lishi mumkin, shuning uchun payment_type bo'yicha filtrlash o'rniga
+  // har bir sotuvning paid_naqd/paid_karta maydonlarini to'g'ridan-to'g'ri
+  // yig'amiz — bu qarzga qisman to'langan upfront qismini ham to'g'ri hisoblaydi.
   const total = sales.reduce((s, x) => s + x.total_amount, 0);
-  const cashTotal = sales.filter((s) => s.payment_type === 'naqd').reduce((s, x) => s + x.total_amount, 0);
-  const cardTotal = sales.filter((s) => s.payment_type === 'karta').reduce((s, x) => s + x.total_amount, 0);
-  const debtTotal = sales.filter((s) => s.payment_type === 'qarz').reduce((s, x) => s + x.debt_amount, 0);
+  const cashTotal = sales.reduce((s, x) => s + Number(x.paid_naqd || 0), 0);
+  const cardTotal = sales.reduce((s, x) => s + Number(x.paid_karta || 0), 0);
+  const debtTotal = sales.reduce((s, x) => s + Number(x.debt_amount || 0), 0);
 
   const maxDaily = Math.max(1, ...daily.map((d) => d.total));
 
@@ -179,7 +183,18 @@ export default function Reports() {
                 <td>{new Date(s.created_at).toLocaleString('uz-UZ')}</td>
                 <td>{s.customer_name || '—'}</td>
                 <td>{s.seller_name}</td>
-                <td><span className={`badge ${s.payment_type === 'qarz' ? 'red' : 'green'}`}>{s.payment_type}</span></td>
+                <td>
+                  <span className={`badge ${s.payment_type === 'qarz' ? 'red' : s.payment_type === 'aralash' ? 'orange' : 'green'}`}>
+                    {s.payment_type}
+                  </span>
+                  {/* (34) Aralash yoki qisman to'langan qarz sotuvlarida naqd/karta
+                      ulushini ham ko'rsatamiz, shunda tarkibi shaffof bo'ladi. */}
+                  {Number(s.paid_naqd) > 0 && Number(s.paid_karta) > 0 && (
+                    <div style={{ fontSize: 11, color: 'var(--text-dim)', marginTop: 2 }}>
+                      💵 {money(s.paid_naqd)} + 💳 {money(s.paid_karta)}
+                    </div>
+                  )}
+                </td>
                 <td>
                   {money(s.total_amount)}
                   {Number(s.discount_amount) > 0 && (
