@@ -118,6 +118,32 @@ function normalize(data) {
     normalized.meta.salesMarginMigratedV1 = true;
   }
 
+  // ---------------------------------------------------------------------
+  // (34) BIR MARTALIK MIGRATSIYA: aralash to'lov (naqd+karta bo'linishi)
+  // qo'shilishidan oldingi sotuvlarga paid_naqd/paid_karta maydonlarini
+  // qo'shamiz — bular "hozir to'langan" summaning naqd va karta o'rtasida
+  // qanday bo'linganini bildiradi. Eski yozuvlarda bunday bo'linish
+  // bo'lmagan (har bir sotuv yagona turga tegishli edi), shuning uchun
+  // AVVALGI kassa-hisobot mantig'iga mos taxmin qilamiz: 'karta' bo'lsa —
+  // hammasi kartaga, aks holda (jumladan 'qarz') hammasi naqdga (chunki
+  // eski dashboard hisobi qarz to'lovini ham naqd deb hisoblardi) — shu
+  // orqali tarixiy naqt/karta balanslari birdaniga o'zgarib qolmaydi.
+  if (!normalized.meta.paidSplitMigratedV1) {
+    for (const sale of normalized.sales) {
+      if (sale.paid_naqd === undefined || sale.paid_karta === undefined) {
+        const paidAmount = Number(sale.paid_amount || 0);
+        if (sale.payment_type === 'karta') {
+          sale.paid_naqd = 0;
+          sale.paid_karta = paidAmount;
+        } else {
+          sale.paid_naqd = paidAmount;
+          sale.paid_karta = 0;
+        }
+      }
+    }
+    normalized.meta.paidSplitMigratedV1 = true;
+  }
+
   return normalized;
 }
 
