@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { readData, writeData, nextId } from '../db/store.js';
 import { authRequired } from '../middleware/auth.js';
+import { logStockMovement } from '../lib/stockMovements.js';
 
 const router = Router();
 
@@ -106,6 +107,8 @@ router.post('/', authRequired, (req, res) => {
     created_at: new Date().toISOString(),
   });
 
+  const customerName = customer_id ? data.customers.find((c) => c.id == customer_id)?.full_name || null : null;
+
   for (const it of items) {
     const itemId = nextId(data, 'sale_items');
     data.sale_items.push({
@@ -124,6 +127,23 @@ router.post('/', authRequired, (req, res) => {
     // (27) "Uzoq vaqt sotilmagan" filtri uchun — har bir mahsulot oxirgi
     // marta qachon sotilganini kuzatib boramiz.
     p.last_sold_at = new Date().toISOString();
+
+    // (32/42) Har bir sotilgan band harakatlar jurnaliga yoziladi — bu
+    // yozuv sotuv keyinchalik qaytarilib/o'chirilib ketsa ham O'ZGARMAY
+    // qoladi, shuning uchun mahsulot va umumiy tarix hech qachon "sotuv
+    // bo'lgan edi" izini yo'qotmaydi.
+    logStockMovement(data, {
+      product_id: it.product_id,
+      product_name: it.product_name,
+      type: 'sotuv',
+      quantity_delta: -Number(it.quantity || 0),
+      unit_price: it.unit_price,
+      payment_type: resolvedPaymentType,
+      customer_name: customerName,
+      source_type: 'sale',
+      source_id: saleId,
+      performed_by: req.user?.full_name,
+    });
   }
 
   writeData(data);
@@ -185,6 +205,7 @@ router.delete('/:id', authRequired, (req, res) => {
   if (!Array.isArray(data.stock_writeoffs)) data.stock_writeoffs = [];
   const now = new Date().toISOString();
   const writtenOff = [];
+  const customerName = sale.customer_id ? data.customers.find((c) => c.id == sale.customer_id)?.full_name || null : null;
 
   for (const it of data.sale_items.filter((item) => item.sale_id == req.params.id)) {
     const product = data.products.find((p) => p.id == it.product_id);
@@ -196,6 +217,18 @@ router.delete('/:id', authRequired, (req, res) => {
 
       if (!isDefective) {
         product.quantity += Number(it.quantity || 0);
+        logStockMovement(data, {
+          product_id: product.id,
+          product_name: it.product_name || product.name,
+          type: 'qaytarish',
+          quantity_delta: Number(it.quantity || 0),
+          unit_price: it.unit_price,
+          customer_name: customerName,
+          source_type: 'sale',
+          source_id: sale.id,
+          performed_by: req.user?.full_name,
+          note: "Sotuv qaytarildi — qoldiqqa qaytarildi",
+        });
       } else {
         const unitCost = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
         const quantity = Number(it.quantity || 0);
@@ -214,6 +247,18 @@ router.delete('/:id', authRequired, (req, res) => {
           created_at: now,
         });
         writtenOff.push({ product_name: it.product_name || product.name, quantity });
+        logStockMovement(data, {
+          product_id: product.id,
+          product_name: it.product_name || product.name,
+          type: 'hisobdan_chiqarish',
+          quantity_delta: 0,
+          unit_cost: unitCost,
+          customer_name: customerName,
+          source_type: 'stock_writeoff',
+          source_id: writeoffId,
+          performed_by: req.user?.full_name,
+          note: 'Sotuv qaytarildi — mahsulot yaroqsiz, hisobdan chiqarildi',
+        });
       }
     }
   }
@@ -250,6 +295,7 @@ router.post('/:id/close-debt', authRequired, (req, res) => {
   const writtenOff = [];
   let restockedCount = 0;
   let writtenOffCount = 0;
+  const customerName = sale.customer_id ? data.customers.find((c) => c.id == sale.customer_id)?.full_name || null : null;
 
   for (const it of data.sale_items.filter((item) => item.sale_id == sale.id)) {
     const product = data.products.find((p) => p.id == it.product_id);
@@ -259,6 +305,18 @@ router.post('/:id/close-debt', authRequired, (req, res) => {
     if (!isDefective) {
       product.quantity += Number(it.quantity || 0);
       restockedCount++;
+      logStockMovement(data, {
+        product_id: product.id,
+        product_name: it.product_name || product.name,
+        type: 'qaytarish',
+        quantity_delta: Number(it.quantity || 0),
+        unit_price: it.unit_price,
+        customer_name: customerName,
+        source_type: 'sale',
+        source_id: sale.id,
+        performed_by: req.user?.full_name,
+        note: "Qarz yopildi — qoldiqqa qaytarildi",
+      });
     } else {
       const unitCost = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
       const quantity = Number(it.quantity || 0);
@@ -278,6 +336,18 @@ router.post('/:id/close-debt', authRequired, (req, res) => {
       });
       writtenOff.push({ product_name: it.product_name || product.name, quantity });
       writtenOffCount++;
+      logStockMovement(data, {
+        product_id: product.id,
+        product_name: it.product_name || product.name,
+        type: 'hisobdan_chiqarish',
+        quantity_delta: 0,
+        unit_cost: unitCost,
+        customer_name: customerName,
+        source_type: 'stock_writeoff',
+        source_id: writeoffId,
+        performed_by: req.user?.full_name,
+        note: 'Qarz yopildi — mahsulot yaroqsiz, hisobdan chiqarildi',
+      });
     }
   }
 
