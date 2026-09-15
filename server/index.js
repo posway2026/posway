@@ -10,6 +10,7 @@ import reportRoutes from './routes/reports.js';
 import cashMovementRoutes from './routes/cashMovements.js';
 import supplierDebtRoutes from './routes/supplierDebts.js';
 import cashCloseRoutes from './routes/cashCloses.js';
+import stockMovementRoutes from './routes/stockMovements.js';
 
 dotenv.config();
 
@@ -25,6 +26,7 @@ app.use('/api/reports', reportRoutes);
 app.use('/api/cash-movements', cashMovementRoutes);
 app.use('/api/supplier-debts', supplierDebtRoutes);
 app.use('/api/cash-closes', cashCloseRoutes);
+app.use('/api/stock-movements', stockMovementRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
