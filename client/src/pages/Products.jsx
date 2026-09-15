@@ -26,11 +26,14 @@ export default function Products() {
   const [sortBy, setSortBy] = useState('created_desc');
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [showStaleOnly, setShowStaleOnly] = useState(false);
+  const [deleteModal, setDeleteModal] = useState(null);
   const { user } = useAuth();
   const canEdit = user.role === 'admin' || user.role === 'omborchi';
 
   function load(s) {
-    api.listProducts(s).then((rows) => setProducts(rows.map(normalizeProduct))).catch(() => {});
+    // (yangi) O'chirilgan mahsulotlar ham ko'rinsin (xiraroq) — shu bilan
+    // xato bosilgan o'chirishni "Tiklash" orqali qaytarish mumkin bo'ladi.
+    api.listProducts(s, true).then((rows) => setProducts(rows.map(normalizeProduct))).catch(() => {});
   }
 
   useEffect(() => { load(); }, []);
@@ -110,18 +113,47 @@ export default function Products() {
     }
   }
 
-  async function handleDelete(id) {
-    if (!confirm("Mahsulotni o'chirishga ishonchingiz komilmi?")) return;
-    await api.deleteProduct(id);
-    load(search);
+  // (yangi) O'chirishdan oldin — agar mahsulotga bog'liq kirim tarixi
+  // (naqt/karta yoki nasiya) bo'lsa, avval buni ko'rsatib, kassa/qarzga
+  // qanday ta'sir qilishini so'raymiz (oddiy o'chirish o'rniga) — shunda
+  // pul "shunchaki yo'q bo'lib qolmaydi".
+  async function handleDelete(product) {
+    let summary;
+    try {
+      summary = await api.productKirimSummary(product.id);
+    } catch (e) {
+      summary = { count: 0 };
+    }
+    if (!summary.count) {
+      if (!confirm(`"${product.name}" mahsulotni o'chirishga ishonchingiz komilmi?`)) return;
+      try {
+        await api.deleteProduct(product.id);
+        load(search);
+      } catch (e) {
+        alert(e.message || "O'chirishda xatolik yuz berdi");
+      }
+      return;
+    }
+    setDeleteModal({ product, summary });
   }
 
+  async function confirmDelete(action) {
+    try {
+      await api.deleteProduct(deleteModal.product.id, action);
+      setDeleteModal(null);
+      load(search);
+    } catch (e) {
+      alert(e.message || "O'chirishda xatolik yuz berdi");
+    }
+  }
+
+  const activeProducts = products.filter((p) => !p.is_deleted);
   const stats = {
-    typeCount: products.length,
-    totalUnits: products.reduce((s, p) => s + (Number(p.quantity) || 0), 0),
-    costValue: products.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.costPrice ?? p.purchase_price) || 0), 0),
-    saleValue: products.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.sale_price) || 0), 0),
-    lowStockCount: products.filter((p) => (Number(p.quantity) || 0) <= (Number(p.min_quantity) || 0)).length,
+    typeCount: activeProducts.length,
+    totalUnits: activeProducts.reduce((s, p) => s + (Number(p.quantity) || 0), 0),
+    costValue: activeProducts.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.costPrice ?? p.purchase_price) || 0), 0),
+    saleValue: activeProducts.reduce((s, p) => s + (Number(p.quantity) || 0) * (Number(p.sale_price) || 0), 0),
+    lowStockCount: activeProducts.filter((p) => (Number(p.quantity) || 0) <= (Number(p.min_quantity) || 0)).length,
   };
   stats.potentialProfit = stats.saleValue - stats.costValue;
 
@@ -131,7 +163,10 @@ export default function Products() {
   const STALE_DAYS = 30;
   const staleThreshold = Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000;
 
-  let visibleProducts = [...products];
+  // (yangi) O'chirilgan mahsulotlar "kam qolgan"/"uzoq sotilmagan"
+  // filtrlariga kirmaydi (bular faol ombor haqida savol), lekin filtr
+  // yoqilmagan holatda ro'yxat oxirida xiraroq ko'rinib turadi.
+  let visibleProducts = (showLowStockOnly || showStaleOnly) ? [...activeProducts] : [...products];
   if (showLowStockOnly) {
     visibleProducts = visibleProducts.filter((p) => (Number(p.quantity) || 0) <= (Number(p.min_quantity) || 0));
   }
@@ -142,6 +177,7 @@ export default function Products() {
     });
   }
   visibleProducts.sort((a, b) => {
+    if (!!a.is_deleted !== !!b.is_deleted) return a.is_deleted ? 1 : -1;
     if (sortBy === 'name') return a.name.localeCompare(b.name);
     if (sortBy === 'created_desc') return new Date(b.created_at) - new Date(a.created_at);
     if (sortBy === 'created_asc') return new Date(a.created_at) - new Date(b.created_at);
@@ -242,8 +278,12 @@ export default function Products() {
           </thead>
           <tbody>
             {visibleProducts.map((p) => (
-              <tr key={p.id}>
-                <td>{p.name}<div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{p.car_models}</div></td>
+              <tr key={p.id} style={p.is_deleted ? { opacity: 0.5 } : undefined}>
+                <td>
+                  {p.name}
+                  {p.is_deleted && <span className="badge" style={{ fontSize: 10, marginLeft: 6 }}>O'chirilgan</span>}
+                  <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{p.car_models}</div>
+                </td>
                 <td>{p.brand}</td>
                 <td>
                   <span className={`badge ${p.part_type === 'original' ? 'green' : 'orange'}`}>
@@ -257,9 +297,15 @@ export default function Products() {
                 </td>
                 {canEdit && (
                   <td style={{ display: 'flex', gap: 6 }}>
-                    <button className="btn secondary" onClick={() => openKirim(p)}>📥 Kirim</button>
-                    <button className="btn secondary" onClick={() => openEdit(p)}>Tahrirlash</button>
-                    {user.role === 'admin' && <button className="btn danger" onClick={() => handleDelete(p.id)}>O'chirish</button>}
+                    {p.is_deleted ? (
+                      user.role === 'admin' && <button className="btn secondary" onClick={() => api.restoreProduct(p.id).then(() => load(search))}>Tiklash</button>
+                    ) : (
+                      <>
+                        <button className="btn secondary" onClick={() => openKirim(p)}>📥 Kirim</button>
+                        <button className="btn secondary" onClick={() => openEdit(p)}>Tahrirlash</button>
+                        {user.role === 'admin' && <button className="btn danger" onClick={() => handleDelete(p)}>O'chirish</button>}
+                      </>
+                    )}
                   </td>
                 )}
               </tr>
@@ -377,6 +423,32 @@ export default function Products() {
               <button className="btn" style={{ flex: 1 }}>Saqlash</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {deleteModal && (
+        <div className="modal-overlay" onClick={() => setDeleteModal(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>"{deleteModal.product.name}"ni o'chirish</h3>
+            <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 14 }}>
+              Bu mahsulot uchun kirim tarixi bor:
+              {deleteModal.summary.naqdKartaTotal > 0 && (
+                <div>💵 Naqt/karta orqali kassadan sarflangan: <b>{money(deleteModal.summary.naqdKartaTotal)}</b></div>
+              )}
+              {deleteModal.summary.nasiyaTotal > 0 && (
+                <div>📒 Ta'minotchiga nasiya (qarz): <b>{money(deleteModal.summary.nasiyaTotal)}</b></div>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button className="btn danger" onClick={() => confirmDelete('cancel_kirim')}>
+                Xato kiritilgan edi — kirim, kassa harakati va qarz to'liq bekor qilinsin
+              </button>
+              <button className="btn secondary" onClick={() => confirmDelete('keep_history')}>
+                Yo'q, pul/qarz haqiqiy sarflangan — tarix saqlansin, faqat ro'yxatdan chiqarilsin
+              </button>
+              <button className="btn secondary" onClick={() => setDeleteModal(null)}>Bekor qilish</button>
+            </div>
+          </div>
         </div>
       )}
 
