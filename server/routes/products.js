@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { readData, writeData, nextId } from '../db/store.js';
 import { authRequired, roleRequired } from '../middleware/auth.js';
+import { logStockMovement } from '../lib/stockMovements.js';
 
 const router = Router();
 
@@ -72,6 +73,19 @@ router.get('/:id', authRequired, (req, res) => {
   const row = data.products.find((p) => p.id == req.params.id);
   if (!row) return res.status(404).json({ error: 'Topilmadi' });
   res.json(normalizeProduct(row));
+});
+
+// (42) Shu mahsulotning to'liq harakatlar tarixi — kirim, sotuv,
+// qaytarish, hisobdan chiqarish, tuzatish — barchasi bitta umumiy
+// jurnaldan (stock_movements) olinadi, eng yangisidan boshlab.
+router.get('/:id/movements', authRequired, (req, res) => {
+  const data = readData();
+  const product = data.products.find((p) => p.id == req.params.id);
+  if (!product) return res.status(404).json({ error: 'Topilmadi' });
+  const rows = (data.stock_movements || [])
+    .filter((m) => m.product_id == product.id)
+    .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  res.json(rows);
 });
 
 // ---------- YANGI MAHSULOT YARATISH ----------
@@ -157,6 +171,19 @@ router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => 
       entry.cash_movement_id = movementId;
     }
     data.supplier_debts.push(entry);
+    logStockMovement(data, {
+      product_id: id,
+      product_name: newProduct.name,
+      type: 'kirim',
+      quantity_delta: qty,
+      unit_cost: normalizedCostPrice,
+      payment_type,
+      supplier_name,
+      source_type: 'supplier_debt',
+      source_id: debtId,
+      performed_by: req.user?.full_name,
+      note: note || '',
+    });
   }
 
   writeData(data);
@@ -170,6 +197,8 @@ router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) =
   const { name, brand, category, part_type, costPrice, purchase_price, sale_price, quantity, min_quantity, car_models, sold_count, sales_count } = req.body;
   const normalizedCostPrice = parseNumber(costPrice ?? purchase_price);
   const productSoldCount = Number(sold_count ?? sales_count ?? data.products[idx].sold_count ?? data.products[idx].sales_count ?? 0) || 0;
+  const oldQuantity = Number(data.products[idx].quantity) || 0;
+  const newQuantity = parseNumber(quantity);
   data.products[idx] = {
     ...data.products[idx],
     name,
@@ -181,11 +210,29 @@ router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) =
     sold_count: productSoldCount,
     sales_count: productSoldCount,
     sale_price: parseNumber(sale_price),
-    quantity: parseNumber(quantity),
+    quantity: newQuantity,
     min_quantity: parseNumber(min_quantity ?? data.products[idx].min_quantity ?? 2),
     car_models,
     updated_at: new Date().toISOString(),
   };
+
+  // (42) Mahsulotni tahrirlashda miqdor qo'lda o'zgartirilsa (kirim yoki
+  // sotuv orqali emas) — bu ham tarixga "tuzatish" sifatida yoziladi,
+  // shunda mahsulot tarixida qoldiq hech qachon "sababsiz" o'zgarib
+  // qolmaydi.
+  const delta = newQuantity - oldQuantity;
+  if (delta !== 0) {
+    logStockMovement(data, {
+      product_id: data.products[idx].id,
+      product_name: data.products[idx].name,
+      type: 'tuzatish',
+      quantity_delta: delta,
+      source_type: 'manual',
+      performed_by: req.user?.full_name,
+      note: "Mahsulot tahrirlashda miqdor qo'lda o'zgartirildi",
+    });
+  }
+
   writeData(data);
   res.json({ success: true });
 });
@@ -227,9 +274,29 @@ router.delete('/:id', authRequired, roleRequired('admin'), (req, res) => {
           data.cash_movements = (data.cash_movements || []).filter((m) => m.id !== entry.cash_movement_id);
         }
         product.quantity = Math.max(0, Number(product.quantity || 0) - Number(entry.quantity || 0));
+        logStockMovement(data, {
+          product_id: product.id,
+          product_name: product.name,
+          type: 'kirim_bekor',
+          quantity_delta: -(Number(entry.quantity) || 0),
+          unit_cost: entry.unit_cost,
+          payment_type: entry.payment_type,
+          supplier_name: entry.supplier_name,
+          source_type: 'supplier_debt',
+          source_id: entry.id,
+          performed_by: req.user?.full_name,
+          note: "Mahsulot o'chirilganda kirim tarixi bekor qilindi",
+        });
       }
       const relatedIds = new Set(related.map((e) => e.id));
+      const touchedDocIds = new Set(related.map((e) => e.kirim_document_id).filter(Boolean));
       data.supplier_debts = (data.supplier_debts || []).filter((d) => !relatedIds.has(d.id));
+      // Endi bo'shab qolgan (boshqa mahsulot bandi qolmagan) kirim
+      // hujjatlarini ham tozalaymiz.
+      if (touchedDocIds.size > 0) {
+        const stillUsedDocIds = new Set((data.supplier_debts || []).map((d) => d.kirim_document_id).filter(Boolean));
+        data.kirim_documents = (data.kirim_documents || []).filter((doc) => !touchedDocIds.has(doc.id) || stillUsedDocIds.has(doc.id));
+      }
     }
     // action === 'keep_history': supplier_debts/cash_movements yozuvlariga tegilmaydi.
   }
@@ -323,6 +390,19 @@ router.post('/:id/kirim', authRequired, roleRequired('admin', 'omborchi'), (req,
     entry.cash_movement_id = movementId;
   }
   data.supplier_debts.push(entry);
+  logStockMovement(data, {
+    product_id: data.products[idx].id,
+    product_name: data.products[idx].name,
+    type: 'kirim',
+    quantity_delta: qty,
+    unit_cost: cost,
+    payment_type,
+    supplier_name,
+    source_type: 'supplier_debt',
+    source_id: debtId,
+    performed_by: req.user?.full_name,
+    note: note || '',
+  });
 
   writeData(data);
   res.json({ success: true, product: normalizeProduct(data.products[idx]) });
