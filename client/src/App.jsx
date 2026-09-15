@@ -9,6 +9,7 @@ import Pos from './pages/Pos.jsx';
 import CashMovements from './pages/CashMovements.jsx';
 import Customers from './pages/Customers.jsx';
 import SupplierDebts from './pages/SupplierDebts.jsx';
+import StockMovements from './pages/StockMovements.jsx';
 import CashClose from './pages/CashClose.jsx';
 import Reports from './pages/Reports.jsx';
 import Users from './pages/Users.jsx';
@@ -44,6 +45,7 @@ export default function App() {
           <Route path="kassa-harakatlari" element={<CashMovements />} />
           <Route path="mijozlar" element={<Customers />} />
           <Route path="taminotchilar" element={<SupplierDebts />} />
+          <Route path="harakatlar-tarixi" element={<StockMovements />} />
           <Route path="kassa-yopish" element={<CashClose />} />
           <Route path="hisobotlar" element={<Reports />} />
           <Route
