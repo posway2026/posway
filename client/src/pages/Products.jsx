@@ -13,6 +13,16 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
+// (42) Harakat turlari — mahsulot tarixida o'qish oson bo'lishi uchun.
+const MOVEMENT_LABELS = {
+  kirim: { label: '📥 Kirim', color: 'green' },
+  sotuv: { label: '🛒 Sotuv', color: 'red' },
+  qaytarish: { label: '↩️ Qaytarish', color: 'orange' },
+  hisobdan_chiqarish: { label: "🗑️ Hisobdan chiqarish", color: 'red' },
+  tuzatish: { label: "✏️ Tuzatish", color: 'orange' },
+  kirim_bekor: { label: '❌ Kirim bekor qilindi', color: 'red' },
+};
+
 export default function Products() {
   const [products, setProducts] = useState([]);
   const [search, setSearch] = useState('');
@@ -27,6 +37,9 @@ export default function Products() {
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [showStaleOnly, setShowStaleOnly] = useState(false);
   const [deleteModal, setDeleteModal] = useState(null);
+  const [historyProduct, setHistoryProduct] = useState(null);
+  const [historyRows, setHistoryRows] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const { user } = useAuth();
   const canEdit = user.role === 'admin' || user.role === 'omborchi';
 
@@ -144,6 +157,22 @@ export default function Products() {
       load(search);
     } catch (e) {
       alert(e.message || "O'chirishda xatolik yuz berdi");
+    }
+  }
+
+  // (42) Mahsulotning to'liq harakatlar tarixi — qachon, nima bo'lgan
+  // (kirim/sotuv/qaytarish/hisobdan chiqarish/tuzatish), kimdan/kimga,
+  // qanday to'lov bilan, va o'sha vaqtdagi qoldiq.
+  async function openHistory(product) {
+    setHistoryProduct(product);
+    setHistoryLoading(true);
+    try {
+      const rows = await api.productMovements(product.id);
+      setHistoryRows(rows);
+    } catch (e) {
+      setHistoryRows([]);
+    } finally {
+      setHistoryLoading(false);
     }
   }
 
@@ -302,6 +331,7 @@ export default function Products() {
                     ) : (
                       <>
                         <button className="btn secondary" onClick={() => openKirim(p)}>📥 Kirim</button>
+                        <button className="btn secondary" onClick={() => openHistory(p)}>🕘 Tarix</button>
                         <button className="btn secondary" onClick={() => openEdit(p)}>Tahrirlash</button>
                         {user.role === 'admin' && <button className="btn danger" onClick={() => handleDelete(p)}>O'chirish</button>}
                       </>
@@ -321,7 +351,15 @@ export default function Products() {
             <h3 style={{ marginTop: 0 }}>{editingId ? 'Mahsulotni tahrirlash' : 'Yangi mahsulot'}</h3>
             <div className="form-row">
               <label>Nomi *</label>
-              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              {/* (14b) Mavjud mahsulotlar nomidan tavsiya — xuddi shunga o'xshash
+                  nomli mahsulot allaqachon bor bo'lsa (masalan qoldig'i oz qolgan),
+                  tasodifan takroriy nom bilan yangi yozuv ochib yubormaslik uchun. */}
+              <input required list="existing-product-names-list" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+              {!editingId && form.name && activeProducts.some((p) => p.name.toLowerCase() === form.name.trim().toLowerCase()) && (
+                <div style={{ fontSize: 12, color: 'var(--orange, #b8860b)', marginTop: 4 }}>
+                  ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor — ehtimol shu mahsulotga "📥 Kirim" qilish kerakdir, yangisini yaratish o'rniga.
+                </div>
+              )}
             </div>
             <div className="form-row">
               <label>Brend</label>
@@ -452,8 +490,57 @@ export default function Products() {
         </div>
       )}
 
+      {historyProduct && (
+        <div className="modal-overlay" onClick={() => setHistoryProduct(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 720 }}>
+            <h3 style={{ marginTop: 0 }}>{historyProduct.name} — harakatlar tarixi</h3>
+            {historyLoading ? (
+              <div style={{ color: 'var(--text-dim)' }}>Yuklanmoqda...</div>
+            ) : (
+              <table>
+                <thead>
+                  <tr><th>Sana</th><th>Harakat</th><th>Miqdor</th><th>Qoldiq</th><th>Kim/Nima</th><th>Kim bajardi</th></tr>
+                </thead>
+                <tbody>
+                  {historyRows.map((m) => {
+                    const meta = MOVEMENT_LABELS[m.type] || { label: m.type, color: '' };
+                    return (
+                      <tr key={m.id}>
+                        <td>{new Date(m.created_at).toLocaleString('uz-UZ')}</td>
+                        <td><span className={`badge ${meta.color}`}>{meta.label}</span></td>
+                        <td style={{ color: m.quantity_delta < 0 ? 'var(--red)' : m.quantity_delta > 0 ? 'var(--green)' : undefined }}>
+                          {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta} dona
+                          {(m.unit_cost || m.unit_price) ? (
+                            <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
+                              {m.unit_cost ? `tan narx: ${money(m.unit_cost)}` : ''}
+                              {m.unit_price ? `narx: ${money(m.unit_price)}` : ''}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td>{m.balance_after ?? '-'}</td>
+                        <td>
+                          {m.supplier_name || m.customer_name || '-'}
+                          {m.payment_type && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{m.payment_type}</div>}
+                          {m.note && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{m.note}</div>}
+                        </td>
+                        <td>{m.performed_by || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                  {historyRows.length === 0 && <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>Hali hech qanday harakat yo'q</td></tr>}
+                </tbody>
+              </table>
+            )}
+            <button className="btn secondary" style={{ width: '100%', marginTop: 10 }} onClick={() => setHistoryProduct(null)}>Yopish</button>
+          </div>
+        </div>
+      )}
+
       <datalist id="supplier-names-list">
         {supplierNames.map((name) => <option key={name} value={name} />)}
+      </datalist>
+      <datalist id="existing-product-names-list">
+        {activeProducts.map((p) => <option key={p.id} value={p.name} />)}
       </datalist>
     </div>
   );
