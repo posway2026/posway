@@ -5,19 +5,23 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
-const emptyKirimForm = {
-  product_id: '',
-  new_product_name: '',
-  new_product_brand: '',
-  new_product_part_type: 'original',
-  new_product_car_models: '',
-  new_product_sale_price: '',
-  new_product_min_quantity: 2,
-  quantity: '',
-  unit_cost: '',
-  payment_type: 'naqd',
-  note: '',
-};
+function emptyKirimLine(payment_type = 'naqd') {
+  return {
+    key: Math.random().toString(36).slice(2),
+    isNew: false,
+    product_id: '',
+    new_product_name: '',
+    new_product_brand: '',
+    new_product_part_type: 'original',
+    new_product_car_models: '',
+    new_product_sale_price: '',
+    new_product_min_quantity: 2,
+    quantity: '',
+    unit_cost: '',
+    payment_type,
+    note: '',
+  };
+}
 
 export default function SupplierDebts() {
   const [suppliers, setSuppliers] = useState([]);
@@ -32,10 +36,15 @@ export default function SupplierDebts() {
   const [oldDebtNote, setOldDebtNote] = useState('');
   const [products, setProducts] = useState([]);
   const [kirimModal, setKirimModal] = useState(false);
-  const [kirimForm, setKirimForm] = useState(emptyKirimForm);
-  const [kirimUseNew, setKirimUseNew] = useState(false);
+  // (14) Endi bitta kirim modali BIR NECHTA mahsulot-qatorini bir vaqtda
+  // qo'shishga imkon beradi — bir yetkazib berishda kelgan barcha
+  // mahsulotlar bitta "hujjat" sifatida saqlanadi.
+  const [docDate, setDocDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [docNote, setDocNote] = useState('');
+  const [kirimLines, setKirimLines] = useState([emptyKirimLine()]);
   const [editingEntry, setEditingEntry] = useState(null);
   const [editForm, setEditForm] = useState({ quantity: '', unit_cost: '', payment_type: 'naqd', note: '' });
+  const [docView, setDocView] = useState(null);
 
   function load() {
     api.listSupplierDebts().then(setSuppliers);
@@ -98,44 +107,151 @@ export default function SupplierDebts() {
     }
   }
 
-  // (31) Ta'minotchi sahifasidan to'g'ridan-to'g'ri kirim qo'shish — bu
+  function openKirimModal() {
+    setDocDate(new Date().toISOString().slice(0, 10));
+    setDocNote('');
+    setKirimLines([emptyKirimLine()]);
+    setKirimModal(true);
+  }
+
+  function updateKirimLine(key, patch) {
+    setKirimLines((lines) => lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  function addKirimLine() {
+    setKirimLines((lines) => [...lines, emptyKirimLine(lines[lines.length - 1]?.payment_type || 'naqd')]);
+  }
+
+  function removeKirimLine(key) {
+    setKirimLines((lines) => (lines.length > 1 ? lines.filter((l) => l.key !== key) : lines));
+  }
+
+  // (14) Ta'minotchi sahifasidan to'g'ridan-to'g'ri kirim qo'shish — bu
   // avtomatik ravishda umumiy Mahsulotlar ro'yxatiga qo'shiladi va, to'lov
-  // turidan qat'iy nazar, aynan shu ta'minotchi tarixida saqlanadi.
+  // turidan qat'iy nazar, aynan shu ta'minotchi tarixida saqlanadi. Bir
+  // nechta mahsulot-qatori bo'lsa, hammasi BITTA kirim hujjati sifatida
+  // (bir yetkazib berish) birga saqlanadi.
   async function handleAddKirim(e) {
     e.preventDefault();
-    if (kirimUseNew) {
-      const salePrice = Number(kirimForm.new_product_sale_price) || 0;
-      const costPrice = Number(kirimForm.unit_cost) || 0;
-      if (salePrice > 0 && costPrice > 0 && salePrice < costPrice) {
+
+    for (const line of kirimLines) {
+      const salePrice = Number(line.new_product_sale_price) || 0;
+      const costPrice = Number(line.unit_cost) || 0;
+      if (line.isNew && salePrice > 0 && costPrice > 0 && salePrice < costPrice) {
+        const productLabel = line.new_product_name || 'mahsulot';
         const ok = confirm(
-          `Diqqat! Sotish narxi (${money(salePrice)}) tan narxdan (${money(costPrice)}) past.\n\n` +
+          `Diqqat! "${productLabel}" uchun sotish narxi (${money(salePrice)}) tan narxdan (${money(costPrice)}) past.\n\n` +
           `Shunday davom etishga ishonchingiz komilmi?`
         );
         if (!ok) return;
       }
     }
+
     try {
       await api.addSupplierKirim(detail.supplier_name, {
-        product_id: kirimUseNew ? null : kirimForm.product_id || null,
-        new_product_name: kirimUseNew ? kirimForm.new_product_name : null,
-        new_product_brand: kirimUseNew ? kirimForm.new_product_brand : undefined,
-        new_product_part_type: kirimUseNew ? kirimForm.new_product_part_type : undefined,
-        new_product_car_models: kirimUseNew ? kirimForm.new_product_car_models : undefined,
-        new_product_sale_price: kirimUseNew ? +kirimForm.new_product_sale_price : undefined,
-        new_product_min_quantity: kirimUseNew ? +kirimForm.new_product_min_quantity : undefined,
-        quantity: +kirimForm.quantity,
-        unit_cost: +kirimForm.unit_cost,
-        payment_type: kirimForm.payment_type,
-        note: kirimForm.note,
+        date: docDate,
+        note: docNote,
+        items: kirimLines.map((line) => ({
+          product_id: line.isNew ? null : line.product_id || null,
+          new_product_name: line.isNew ? line.new_product_name : null,
+          new_product_brand: line.isNew ? line.new_product_brand : undefined,
+          new_product_part_type: line.isNew ? line.new_product_part_type : undefined,
+          new_product_car_models: line.isNew ? line.new_product_car_models : undefined,
+          new_product_sale_price: line.isNew ? +line.new_product_sale_price : undefined,
+          new_product_min_quantity: line.isNew ? +line.new_product_min_quantity : undefined,
+          quantity: +line.quantity,
+          unit_cost: +line.unit_cost,
+          payment_type: line.payment_type,
+          note: line.note,
+        })),
       });
       setKirimModal(false);
-      setKirimForm(emptyKirimForm);
-      setKirimUseNew(false);
+      setKirimLines([emptyKirimLine()]);
+      setDocNote('');
       await refreshDetail();
       load();
       api.listProducts().then(setProducts).catch(() => {});
     } catch (err) {
       alert(err.message || "Kirim qo'shishda xatolik yuz berdi");
+    }
+  }
+
+  // (14) Kirim hujjatini chek/invoys ko'rinishida chop etish — yangi
+  // oynada oddiy HTML sifatida ochiladi va avtomatik chop etish
+  // dialogini chiqaradi.
+  function printKirimDocument(doc) {
+    const w = window.open('', '_blank', 'width=420,height=640');
+    if (!w) return;
+    const rows = doc.items.map((it) => `
+      <tr>
+        <td>${it.product_name || 'Eski qarz'}</td>
+        <td style="text-align:center">${it.quantity ?? '-'}</td>
+        <td style="text-align:right">${money(it.unit_cost || 0)}</td>
+        <td style="text-align:right">${money(it.amount)}</td>
+        <td style="text-align:center">${it.payment_type || ''}</td>
+      </tr>`).join('');
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Kirim hujjati</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 13px; padding: 16px; color: #111; }
+        h2 { margin: 0 0 4px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border-bottom: 1px solid #ccc; padding: 6px 4px; text-align: left; }
+        .total { font-weight: bold; margin-top: 12px; text-align: right; font-size: 15px; }
+      </style></head>
+      <body>
+        <h2>Kirim hujjati</h2>
+        <div>Ta'minotchi: <b>${doc.supplier_name}</b></div>
+        <div>Sana: ${new Date(doc.date).toLocaleDateString('uz-UZ')}</div>
+        ${doc.note ? `<div>Izoh: ${doc.note}</div>` : ''}
+        <table>
+          <thead><tr><th>Mahsulot</th><th>Soni</th><th>Narx</th><th>Summa</th><th>To'lov</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div class="total">Jami: ${money(doc.total)}</div>
+        <script>window.onload = function() { window.print(); };</script>
+      </body></html>`);
+    w.document.close();
+  }
+
+  async function openDocView(docSummaryRow) {
+    try {
+      const full = await api.getKirimDocument(docSummaryRow.id);
+      setDocView(full);
+    } catch (err) {
+      alert(err.message || "Hujjatni ochishda xatolik yuz berdi");
+    }
+  }
+
+  // Bitta satr o'chirilgandan keyin hujjat ko'rinishini yangilaydi — agar
+  // shu o'chirilgan satr hujjatdagi OXIRGI mahsulot bo'lgan bo'lsa, hujjat
+  // ham avtomatik o'chib ketadi (backend tomonidan), shunda modal
+  // shunchaki yopiladi (xato ko'rsatilmaydi).
+  async function refreshDocView(docId) {
+    try {
+      const full = await api.getKirimDocument(docId);
+      setDocView(full);
+    } catch (err) {
+      setDocView(null);
+    }
+  }
+
+  async function handleDeleteDocument(docId) {
+    if (String(docId).startsWith('legacy-')) {
+      // Eski, hujjatsiz yozuv — bitta satrni o'chirish bilan bir xil.
+      const legacyEntryId = Number(String(docId).replace('legacy-', ''));
+      await handleDeleteEntry(legacyEntryId);
+      setDocView(null);
+      return;
+    }
+    if (!confirm("Bu KIRIM HUJJATINI (undagi barcha mahsulotlar bilan) butunlay o'chirishni xohlaysizmi? Mahsulot qoldig'i va kassa balansi avtomatik to'g'irlanadi.")) return;
+    try {
+      await api.deleteKirimDocument(docId);
+      setDocView(null);
+      await refreshDetail();
+      load();
+      api.listProducts().then(setProducts).catch(() => {});
+    } catch (err) {
+      alert(err.message || "Hujjatni o'chirishda xatolik yuz berdi");
     }
   }
 
@@ -272,31 +388,37 @@ export default function SupplierDebts() {
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 620 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h3 style={{ marginTop: 0 }}>{detail.supplier_name} — tarix</h3>
-              <button className="btn" onClick={() => setKirimModal(true)}>+ Yangi kirim</button>
+              <button className="btn" onClick={openKirimModal}>+ Yangi kirim</button>
             </div>
 
             <div style={{ display: 'flex', gap: 16, marginBottom: 12 }}>
               <div>Jami olingan: <b>{money(detail.debts.reduce((s, d) => s + Number(d.amount || 0), 0))}</b></div>
             </div>
 
-            <h4>Kirimlar</h4>
+            {/* (14) Kirimlar endi HUJJAT bo'yicha guruhlangan — bir
+                yetkazib berishda kelgan bir nechta mahsulot bitta qatorda
+                ko'rinadi ("Ko'rish" orqali ichidagi mahsulotlarni ochish
+                mumkin). */}
+            <h4>Kirim hujjatlari</h4>
             <table>
-              <thead><tr><th>Sana</th><th>Mahsulot</th><th>Soni</th><th>Summa</th><th>Turi</th><th></th></tr></thead>
+              <thead><tr><th>Sana</th><th>Mahsulot(lar)</th><th>Jami summa</th><th>Izoh</th><th></th></tr></thead>
               <tbody>
-                {detail.debts.map((d) => (
-                  <tr key={d.id}>
-                    <td>{new Date(d.created_at).toLocaleDateString('uz-UZ')}</td>
-                    <td>{d.product_name || <span style={{ color: 'var(--text-dim)' }}>Eski qarz</span>}</td>
-                    <td>{d.quantity ?? '-'}</td>
-                    <td>{money(d.amount)}</td>
-                    <td>{paymentBadge(d.payment_type)}</td>
+                {(detail.documents || []).map((doc) => (
+                  <tr key={doc.id}>
+                    <td>{new Date(doc.date).toLocaleDateString('uz-UZ')}</td>
+                    <td>
+                      {doc.items.length === 1
+                        ? (doc.items[0].product_name || <span style={{ color: 'var(--text-dim)' }}>Eski qarz</span>)
+                        : `${doc.items.length} ta mahsulot`}
+                    </td>
+                    <td>{money(doc.total)}</td>
+                    <td style={{ color: 'var(--text-dim)', fontSize: 12 }}>{doc.note}</td>
                     <td style={{ display: 'flex', gap: 4 }}>
-                      <button className="btn secondary" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => openEditEntry(d)}>Tahrirlash</button>
-                      <button className="btn danger" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => handleDeleteEntry(d.id)}>O'chirish</button>
+                      <button className="btn secondary" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => openDocView(doc)}>Ko'rish</button>
                     </td>
                   </tr>
                 ))}
-                {detail.debts.length === 0 && <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>Kirim yo'q</td></tr>}
+                {(!detail.documents || detail.documents.length === 0) && <tr><td colSpan={5} style={{ color: 'var(--text-dim)' }}>Kirim yo'q</td></tr>}
               </tbody>
             </table>
             <h4>To'lovlar</h4>
@@ -330,86 +452,165 @@ export default function SupplierDebts() {
           shuning uchun JSX'da ATAYLAB detail'dan KEYIN joylashtirilgan —
           aks holda "detail" oynasi keyinroq render bo'lganidan (DOM'da
           keyingi) ustiga chiqib, ularning tugmalarini bosib bo'lmay qolar edi. */}
+      {/* (14) Bitta yetkazib berishda kelgan BIR NECHTA mahsulotni bitta
+          hujjat sifatida qo'shish — har bir mahsulot o'z qatorida, "+ Yana
+          mahsulot qo'shish" bilan istalgancha qator qo'shish mumkin. */}
       {kirimModal && detail && (
         <div className="modal-overlay" onClick={() => setKirimModal(false)}>
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleAddKirim}>
-            <h3 style={{ marginTop: 0 }}>{detail.supplier_name} — yangi kirim qo'shish</h3>
+          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleAddKirim} style={{ maxWidth: 760 }}>
+            <h3 style={{ marginTop: 0 }}>{detail.supplier_name} — yangi kirim hujjati</h3>
 
-            <div className="form-row">
-              <label>
-                <input type="checkbox" checked={kirimUseNew} onChange={(e) => setKirimUseNew(e.target.checked)} style={{ marginRight: 6 }} />
-                Yangi mahsulot (ro'yxatda yo'q)
-              </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 8 }}>
+              <div className="form-row">
+                <label>Yetkazib berish sanasi</label>
+                <input type="date" value={docDate} onChange={(e) => setDocDate(e.target.value)} />
+              </div>
+              <div className="form-row">
+                <label>Hujjat izohi (ixtiyoriy)</label>
+                <input value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="masalan: bozordan olingan yuk" />
+              </div>
             </div>
 
-            {kirimUseNew ? (
-              <>
+            {kirimLines.map((line, idx) => (
+              <div key={line.key} style={{ border: '1px solid var(--border, #333)', borderRadius: 8, padding: 10, marginBottom: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <b style={{ fontSize: 13 }}>{idx + 1}-mahsulot</b>
+                  {kirimLines.length > 1 && (
+                    <button type="button" className="btn danger" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => removeKirimLine(line.key)}>O'chirish</button>
+                  )}
+                </div>
+
                 <div className="form-row">
-                  <label>Mahsulot nomi *</label>
-                  <input required value={kirimForm.new_product_name} onChange={(e) => setKirimForm({ ...kirimForm, new_product_name: e.target.value })} />
+                  <label>
+                    <input type="checkbox" checked={line.isNew} onChange={(e) => updateKirimLine(line.key, { isNew: e.target.checked })} style={{ marginRight: 6 }} />
+                    Yangi mahsulot (ro'yxatda yo'q)
+                  </label>
+                </div>
+
+                {line.isNew ? (
+                  <>
+                    <div className="form-row">
+                      <label>Mahsulot nomi *</label>
+                      {/* (14b) Mavjud mahsulotlar nomidan tavsiya — tasodifan
+                          takroriy nom bilan yangi yozuv ochib yubormaslik uchun. */}
+                      <input required list="existing-product-names-list-supplier" value={line.new_product_name} onChange={(e) => updateKirimLine(line.key, { new_product_name: e.target.value })} />
+                      {line.new_product_name && products.some((p) => p.name.toLowerCase() === line.new_product_name.trim().toLowerCase()) && (
+                        <div style={{ fontSize: 12, color: 'var(--orange, #b8860b)', marginTop: 4 }}>
+                          ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor — "Yangi mahsulot" belgisini olib, ro'yxatdan tanlashni o'ylab ko'ring.
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div className="form-row">
+                        <label>Brend</label>
+                        <input value={line.new_product_brand} onChange={(e) => updateKirimLine(line.key, { new_product_brand: e.target.value })} />
+                      </div>
+                      <div className="form-row">
+                        <label>Turi</label>
+                        <select value={line.new_product_part_type} onChange={(e) => updateKirimLine(line.key, { new_product_part_type: e.target.value })}>
+                          <option value="original">Original</option>
+                          <option value="ishlatilgan">Ishlatilgan</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>Mos mashina modellari</label>
+                      <input value={line.new_product_car_models} onChange={(e) => updateKirimLine(line.key, { new_product_car_models: e.target.value })} placeholder="masalan: Nexia, Cobalt, Malibu" />
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div className="form-row">
+                        <label>Sotish narxi *</label>
+                        <input required type="number" value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_sale_price: e.target.value })} />
+                      </div>
+                      <div className="form-row">
+                        <label>Minimal qoldiq</label>
+                        <input type="number" value={line.new_product_min_quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_min_quantity: e.target.value })} />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="form-row">
+                    <label>Mahsulot *</label>
+                    <select required value={line.product_id} onChange={(e) => updateKirimLine(line.key, { product_id: e.target.value })}>
+                      <option value="">— tanlang —</option>
+                      {products.map((p) => <option key={p.id} value={p.id}>{p.name} {p.brand ? `(${p.brand})` : ''}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className="form-row">
+                    <label>Soni *</label>
+                    <input required type="number" value={line.quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { quantity: e.target.value })} />
+                  </div>
+                  <div className="form-row">
+                    <label>Tan narx (dona uchun) *</label>
+                    <input required type="number" value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { unit_cost: e.target.value })} />
+                  </div>
                 </div>
                 <div className="form-row">
-                  <label>Brend</label>
-                  <input value={kirimForm.new_product_brand} onChange={(e) => setKirimForm({ ...kirimForm, new_product_brand: e.target.value })} />
-                </div>
-                <div className="form-row">
-                  <label>Mos mashina modellari</label>
-                  <input value={kirimForm.new_product_car_models} onChange={(e) => setKirimForm({ ...kirimForm, new_product_car_models: e.target.value })} placeholder="masalan: Nexia, Cobalt, Malibu" />
-                </div>
-                <div className="form-row">
-                  <label>Turi</label>
-                  <select value={kirimForm.new_product_part_type} onChange={(e) => setKirimForm({ ...kirimForm, new_product_part_type: e.target.value })}>
-                    <option value="original">Original</option>
-                    <option value="ishlatilgan">Ishlatilgan</option>
+                  <label>To'lov turi *</label>
+                  <select value={line.payment_type} onChange={(e) => updateKirimLine(line.key, { payment_type: e.target.value })}>
+                    <option value="naqd">💵 Naqd (kassadan ayiriladi)</option>
+                    <option value="karta">💳 Karta (kassadan ayiriladi)</option>
+                    <option value="nasiya">📒 Nasiya (qarz sifatida yoziladi)</option>
                   </select>
                 </div>
-                <div className="form-row">
-                  <label>Sotish narxi *</label>
-                  <input required type="number" value={kirimForm.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, new_product_sale_price: e.target.value })} />
-                </div>
-                <div className="form-row">
-                  <label>Minimal qoldiq (ogohlantirish)</label>
-                  <input type="number" value={kirimForm.new_product_min_quantity} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, new_product_min_quantity: e.target.value })} />
-                </div>
-              </>
-            ) : (
-              <div className="form-row">
-                <label>Mahsulot *</label>
-                <select required value={kirimForm.product_id} onChange={(e) => setKirimForm({ ...kirimForm, product_id: e.target.value })}>
-                  <option value="">— tanlang —</option>
-                  {products.map((p) => <option key={p.id} value={p.id}>{p.name} {p.brand ? `(${p.brand})` : ''}</option>)}
-                </select>
+                {line.quantity > 0 && line.unit_cost > 0 && (
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>Ushbu qator: {money(Number(line.quantity) * Number(line.unit_cost))}</div>
+                )}
               </div>
-            )}
+            ))}
 
-            <div className="form-row">
-              <label>Soni *</label>
-              <input required type="number" value={kirimForm.quantity} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, quantity: e.target.value })} />
+            <button type="button" className="btn secondary" style={{ width: '100%', marginBottom: 10 }} onClick={addKirimLine}>+ Yana mahsulot qo'shish</button>
+
+            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 15 }}>
+              Hujjat jami: {money(kirimLines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_cost || 0), 0))}
             </div>
-            <div className="form-row">
-              <label>Tan narx (dona uchun) *</label>
-              <input required type="number" value={kirimForm.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, unit_cost: e.target.value })} />
-            </div>
-            <div className="form-row">
-              <label>To'lov turi *</label>
-              <select value={kirimForm.payment_type} onChange={(e) => setKirimForm({ ...kirimForm, payment_type: e.target.value })}>
-                <option value="naqd">💵 Naqd (kassadan ayiriladi)</option>
-                <option value="karta">💳 Karta (kassadan ayiriladi)</option>
-                <option value="nasiya">📒 Nasiya (qarz sifatida yoziladi)</option>
-              </select>
-            </div>
-            <div className="form-row">
-              <label>Izoh (ixtiyoriy)</label>
-              <input value={kirimForm.note} onChange={(e) => setKirimForm({ ...kirimForm, note: e.target.value })} />
-            </div>
-            {kirimForm.quantity > 0 && kirimForm.unit_cost > 0 && (
-              <div style={{ fontWeight: 700, marginBottom: 10 }}>Jami: {money(Number(kirimForm.quantity) * Number(kirimForm.unit_cost))}</div>
-            )}
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" className="btn secondary" style={{ flex: 1 }} onClick={() => setKirimModal(false)}>Bekor qilish</button>
-              <button className="btn" style={{ flex: 1 }}>Qo'shish</button>
+              <button className="btn" style={{ flex: 1 }}>Saqlash</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {/* (14) Bitta kirim hujjatini ko'rish — ichidagi mahsulotlarni
+          tahrirlash/o'chirish (mavjud, bitta-satrni o'chirish mantig'i
+          ishlatiladi), chek qilib chop etish, yoki butun hujjatni bekor
+          qilish. */}
+      {docView && (
+        <div className="modal-overlay" onClick={() => setDocView(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ marginTop: 0 }}>Kirim hujjati — {new Date(docView.date).toLocaleDateString('uz-UZ')}</h3>
+              <button type="button" className="btn secondary" onClick={() => printKirimDocument(docView)}>🖨️ Chek qilib chiqarish</button>
+            </div>
+            {docView.note && <div style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 8 }}>Izoh: {docView.note}</div>}
+            <table>
+              <thead><tr><th>Mahsulot</th><th>Soni</th><th>Narx</th><th>Summa</th><th>Turi</th><th></th></tr></thead>
+              <tbody>
+                {docView.items.map((d) => (
+                  <tr key={d.id}>
+                    <td>{d.product_name || <span style={{ color: 'var(--text-dim)' }}>Eski qarz</span>}</td>
+                    <td>{d.quantity ?? '-'}</td>
+                    <td>{money(d.unit_cost || 0)}</td>
+                    <td>{money(d.amount)}</td>
+                    <td>{paymentBadge(d.payment_type)}</td>
+                    <td style={{ display: 'flex', gap: 4 }}>
+                      <button className="btn secondary" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => { setDocView(null); openEditEntry(d); }}>Tahrirlash</button>
+                      <button className="btn danger" style={{ fontSize: 12, padding: '4px 8px' }} onClick={async () => { await handleDeleteEntry(d.id); refreshDocView(docView.id); }}>O'chirish</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ fontWeight: 700, textAlign: 'right', marginTop: 8 }}>Jami: {money(docView.total)}</div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 12 }}>
+              <button type="button" className="btn danger" style={{ flex: 1 }} onClick={() => handleDeleteDocument(docView.id)}>Hujjatni butunlay o'chirish</button>
+              <button type="button" className="btn secondary" style={{ flex: 1 }} onClick={() => setDocView(null)}>Yopish</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -454,6 +655,9 @@ export default function SupplierDebts() {
 
       <datalist id="supplier-names-list-2">
         {suppliers.map((s) => <option key={s.supplier_name} value={s.supplier_name} />)}
+      </datalist>
+      <datalist id="existing-product-names-list-supplier">
+        {products.map((p) => <option key={p.id} value={p.name} />)}
       </datalist>
     </div>
   );
