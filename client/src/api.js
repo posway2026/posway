@@ -26,11 +26,19 @@ export const api = {
   createUser: (payload) => request('/auth/users', { method: 'POST', body: JSON.stringify(payload) }),
   listUsers: () => request('/auth/users'),
 
-  listProducts: (search) => request(`/products${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+  listProducts: (search, includeDeleted) => {
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (includeDeleted) params.set('includeDeleted', 'true');
+    const qs = params.toString();
+    return request(`/products${qs ? `?${qs}` : ''}`);
+  },
   lowStock: () => request('/products/low-stock'),
   createProduct: (payload) => request('/products', { method: 'POST', body: JSON.stringify(payload) }),
   updateProduct: (id, payload) => request(`/products/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
-  deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
+  productKirimSummary: (id) => request(`/products/${id}/kirim-summary`),
+  deleteProduct: (id, action) => request(`/products/${id}`, { method: 'DELETE', body: JSON.stringify(action ? { action } : {}) }),
+  restoreProduct: (id) => request(`/products/${id}/restore`, { method: 'POST' }),
   stockIn: (id, payload) => request(`/products/${id}/kirim`, { method: 'POST', body: JSON.stringify(payload) }),
 
   listCustomers: () => request('/customers'),
