@@ -19,8 +19,10 @@ function emptyData() {
     supplier_debt_payments: [],
     cash_closes: [],
     stock_writeoffs: [],
+    stock_movements: [],
+    kirim_documents: [],
     meta: {},
-    seq: { users: 0, products: 0, customers: 0, sales: 0, sale_items: 0, debt_payments: 0, cash_movements: 0, supplier_debts: 0, supplier_debt_payments: 0, cash_closes: 0, stock_writeoffs: 0 },
+    seq: { users: 0, products: 0, customers: 0, sales: 0, sale_items: 0, debt_payments: 0, cash_movements: 0, supplier_debts: 0, supplier_debt_payments: 0, cash_closes: 0, stock_writeoffs: 0, stock_movements: 0, kirim_documents: 0 },
   };
 }
 
@@ -39,12 +41,20 @@ function normalize(data) {
   // (33) Yaroqsiz/nosozligi sababli qoldiqqa qaytarilmay, o'sha zahoti
   // hisobdan chiqarilgan mahsulotlar tarixi (qaytarish amali ichida).
   normalized.stock_writeoffs = Array.isArray(normalized.stock_writeoffs) ? normalized.stock_writeoffs : [];
+  // (14/31/32/42) Kirim hujjatlari (bir yetkazib berish = bitta hujjat,
+  // bir nechta mahsulot-band bilan) va umumiy harakatlar jurnali
+  // (kirim/sotuv/qaytarish/hisobdan chiqarish/tuzatish — har biri bitta
+  // umumiy joyda, doimiy va o'zgarmas holda).
+  normalized.kirim_documents = Array.isArray(normalized.kirim_documents) ? normalized.kirim_documents : [];
+  normalized.stock_movements = Array.isArray(normalized.stock_movements) ? normalized.stock_movements : [];
   normalized.seq = { ...emptyData().seq, ...(data.seq || {}) };
   normalized.seq.cash_movements = normalized.seq.cash_movements || 0;
   normalized.seq.supplier_debts = normalized.seq.supplier_debts || 0;
   normalized.seq.supplier_debt_payments = normalized.seq.supplier_debt_payments || 0;
   normalized.seq.cash_closes = normalized.seq.cash_closes || 0;
   normalized.seq.stock_writeoffs = normalized.seq.stock_writeoffs || 0;
+  normalized.seq.kirim_documents = normalized.seq.kirim_documents || 0;
+  normalized.seq.stock_movements = normalized.seq.stock_movements || 0;
 
   normalized.products = normalized.products.map((product) => ({
     ...product,
