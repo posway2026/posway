@@ -40,6 +40,7 @@ export const api = {
   deleteProduct: (id, action) => request(`/products/${id}`, { method: 'DELETE', body: JSON.stringify(action ? { action } : {}) }),
   restoreProduct: (id) => request(`/products/${id}/restore`, { method: 'POST' }),
   stockIn: (id, payload) => request(`/products/${id}/kirim`, { method: 'POST', body: JSON.stringify(payload) }),
+  productMovements: (id) => request(`/products/${id}/movements`),
 
   listCustomers: () => request('/customers'),
   getCustomer: (id) => request(`/customers/${id}`),
@@ -57,6 +58,8 @@ export const api = {
   addSupplierKirim: (supplierName, payload) => request(`/supplier-debts/${encodeURIComponent(supplierName)}/kirim`, { method: 'POST', body: JSON.stringify(payload) }),
   updateSupplierDebtEntry: (id, payload) => request(`/supplier-debts/debt/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
   deleteSupplierDebtEntry: (id) => request(`/supplier-debts/debt/${id}`, { method: 'DELETE' }),
+  getKirimDocument: (id) => request(`/supplier-debts/kirim-document/${id}`),
+  deleteKirimDocument: (id) => request(`/supplier-debts/kirim-document/${id}`, { method: 'DELETE' }),
 
   listSales: (from, to) => request(`/sales${from && to ? `?from=${from}&to=${to}` : ''}`),
   getSale: (id) => request(`/sales/${id}`),
@@ -72,6 +75,11 @@ export const api = {
   dashboard: () => request('/reports/dashboard'),
   dailyReport: () => request('/reports/daily'),
   profitReport: (period = 'daily') => request(`/reports/profit?period=${encodeURIComponent(period)}`),
+
+  listStockMovements: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/stock-movements${qs ? `?${qs}` : ''}`);
+  },
 
   expectedCashClose: () => request('/cash-closes/expected'),
   listCashCloses: () => request('/cash-closes'),
