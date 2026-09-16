@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { readData, writeData, nextId } from '../db/store.js';
 import { authRequired } from '../middleware/auth.js';
 import { logStockMovement } from '../lib/stockMovements.js';
+import { computeItemsValue, processReturnItems, computeReturnFinancials, applyReturnToSale, logRefundCashMovement } from '../lib/returns.js';
 
 const router = Router();
 
@@ -189,98 +190,119 @@ router.get('/:id', authRequired, (req, res) => {
   res.json({ sale, items });
 });
 
-// (33) Sotuvni qaytarish/bekor qilish. Har bir mahsulot uchun holatini
-// tanlash mumkin — frontend `itemConditions: { [sale_item_id]: 'defective' }`
-// ko'rinishida yuboradi (ko'rsatilmagan yoki 'sellable' bo'lgan har qanday
-// band — standart, eski xatti-harakat bilan bir xil: qoldiqqa qaytariladi).
-// 'defective' deb belgilangan band esa QOLDIQQA QAYTARILMAYDI — o'rniga
-// bitta amal ichida, qo'shimcha qadamsiz, avtomatik hisobdan chiqariladi
-// (stock_writeoffs jadvaliga yoziladi).
+// (29/33/39) Sotuvni to'liq yoki QISMAN qaytarish. `returnItemIds` orqali
+// chekdagi faqat BA'ZI mahsulotlarni tanlab qaytarish mumkin (yuborilmasa —
+// eski xatti-harakat: barcha bandlar qaytariladi). Har bir band uchun
+// holatini tanlash mumkin — `itemConditions: { [sale_item_id]: 'defective' }`
+// ('defective' bo'lsa qoldiqqa qaytarilmay, avtomatik hisobdan chiqariladi).
+// Qaytarilgan qismning summasi AVVAL shu chekning qarz qoldig'idan
+// yechiladi (bu pul hali yig'ib olinmagan edi); undan ORTIG'I esa
+// ALLAQACHON naqd/karta orqali yig'ib olingan hisoblanadi va mijozga
+// jismonan qaytarib berilishi SHART — buni qanday (necha so'm naqd / necha
+// so'm karta) qaytarganini `refund: { naqd, karta }` orqali ko'rsatish
+// kerak, aks holda so'rov 400 xatolik bilan aniq kerakli summani qaytaradi.
+// Bu alohida, aniq Kassa harakati sifatida yoziladi (foyda hisobotida ikki
+// marta hisoblanmasligi uchun belgilanadi — lib/returns.js'ga qarang).
+// Agar tanlangan bandlar chekning BARCHA joriy bandlarini qamrab olsa —
+// bu TO'LIQ qaytarish, chek butunlay o'chiriladi (avvalgidek); aks holda
+// chek saqlanib qoladi, faqat summalari mos ravishda kamayadi va
+// `return_history`ga yozuv qo'shiladi (tarixiy shaffoflik uchun).
 router.delete('/:id', authRequired, (req, res) => {
   const data = readData();
   const sale = data.sales.find((s) => s.id == req.params.id);
   if (!sale) return res.status(404).json({ error: 'Sotuv topilmadi' });
 
-  const itemConditions = (req.body && typeof req.body.itemConditions === 'object' && req.body.itemConditions) || {};
-  if (!Array.isArray(data.stock_writeoffs)) data.stock_writeoffs = [];
-  const now = new Date().toISOString();
-  const writtenOff = [];
-  const customerName = sale.customer_id ? data.customers.find((c) => c.id == sale.customer_id)?.full_name || null : null;
+  const allItems = data.sale_items.filter((item) => item.sale_id == req.params.id);
+  const requestedIds = Array.isArray(req.body?.returnItemIds)
+    ? req.body.returnItemIds.map(Number)
+    : allItems.map((i) => i.id);
+  const itemsToReturn = allItems.filter((i) => requestedIds.includes(i.id));
+  const remainingItems = allItems.filter((i) => !requestedIds.includes(i.id));
+  const isFullReturn = remainingItems.length === 0;
 
-  for (const it of data.sale_items.filter((item) => item.sale_id == req.params.id)) {
-    const product = data.products.find((p) => p.id == it.product_id);
-    const isDefective = itemConditions[it.id] === 'defective';
-
-    if (product) {
-      product.sold_count = Math.max(0, Number(product.sold_count || 0) - Number(it.quantity || 0));
-      product.sales_count = Math.max(0, Number(product.sales_count || 0) - Number(it.quantity || 0));
-
-      if (!isDefective) {
-        product.quantity += Number(it.quantity || 0);
-        logStockMovement(data, {
-          product_id: product.id,
-          product_name: it.product_name || product.name,
-          type: 'qaytarish',
-          quantity_delta: Number(it.quantity || 0),
-          unit_price: it.unit_price,
-          customer_name: customerName,
-          source_type: 'sale',
-          source_id: sale.id,
-          performed_by: req.user?.full_name,
-          note: "Sotuv qaytarildi — qoldiqqa qaytarildi",
-        });
-      } else {
-        const unitCost = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
-        const quantity = Number(it.quantity || 0);
-        const writeoffId = nextId(data, 'stock_writeoffs');
-        data.stock_writeoffs.push({
-          id: writeoffId,
-          sale_id: sale.id,
-          sale_item_id: it.id,
-          product_id: product.id,
-          product_name: it.product_name || product.name,
-          quantity,
-          unit_cost: unitCost,
-          total_cost: unitCost * quantity,
-          reason: 'qaytarish_yaroqsiz',
-          user_id: req.user.id,
-          created_at: now,
-        });
-        writtenOff.push({ product_name: it.product_name || product.name, quantity });
-        logStockMovement(data, {
-          product_id: product.id,
-          product_name: it.product_name || product.name,
-          type: 'hisobdan_chiqarish',
-          quantity_delta: 0,
-          unit_cost: unitCost,
-          customer_name: customerName,
-          source_type: 'stock_writeoff',
-          source_id: writeoffId,
-          performed_by: req.user?.full_name,
-          note: 'Sotuv qaytarildi — mahsulot yaroqsiz, hisobdan chiqarildi',
-        });
-      }
-    }
+  if (allItems.length > 0 && itemsToReturn.length === 0) {
+    return res.status(400).json({ error: 'Qaytarish uchun kamida bitta mahsulot tanlang' });
   }
 
-  data.sale_items = data.sale_items.filter((item) => item.sale_id != req.params.id);
-  data.sales = data.sales.filter((s) => s.id != req.params.id);
+  const itemConditions = (req.body && typeof req.body.itemConditions === 'object' && req.body.itemConditions) || {};
+  const now = new Date().toISOString();
+  const customerName = sale.customer_id ? data.customers.find((c) => c.id == sale.customer_id)?.full_name || null : null;
+
+  // MUHIM: avval PUL hisob-kitobini (o'zgartirmasdan) tekshiramiz, faqat
+  // shundan keyingina omborni o'zgartiruvchi processReturnItems() chaqiriladi
+  // — aks holda 400 bilan to'xtasak ham ombor allaqachon o'zgargan bo'lardi
+  // (readData() jonli obyekt qaytaradi).
+  const { returnedSubtotal, returnedCost } = computeItemsValue(data, itemsToReturn);
+  const financials = computeReturnFinancials(sale, returnedSubtotal, returnedCost);
+
+  const refundInput = (req.body && typeof req.body.refund === 'object' && req.body.refund) || {};
+  const refund = { naqd: Math.max(0, Number(refundInput.naqd) || 0), karta: Math.max(0, Number(refundInput.karta) || 0) };
+  const providedRefund = refund.naqd + refund.karta;
+
+  if (financials.remainderNeedingRefund > 0 && Math.abs(providedRefund - financials.remainderNeedingRefund) > 1) {
+    return res.status(400).json({
+      error: `Mijoz bu mahsulot(lar) uchun allaqachon ${Math.round(financials.remainderNeedingRefund).toLocaleString('uz-UZ')} so'm to'lagan — qaytarishni yakunlash uchun buni naqd/karta bo'yicha qanday qaytarib berganingizni ko'rsating.`,
+      remainderNeedingRefund: financials.remainderNeedingRefund,
+    });
+  }
+
+  const { writtenOff, returnedSummary } = processReturnItems(data, {
+    saleItems: itemsToReturn,
+    itemConditions,
+    customerName,
+    performedBy: req.user?.full_name,
+    saleId: sale.id,
+    now,
+    restockNote: "Sotuv qaytarildi — qoldiqqa qaytarildi",
+    writeoffNote: 'Sotuv qaytarildi — mahsulot yaroqsiz, hisobdan chiqarildi',
+    writeoffReason: 'qaytarish_yaroqsiz',
+  });
+
+  const { refundNaqd, refundKarta } = applyReturnToSale(sale, financials, refund);
+
+  if (refundNaqd > 0 || refundKarta > 0) {
+    const refundNote = `Chek #${sale.id}${customerName ? ' — ' + customerName : ''} qaytarildi: ${returnedSummary.map((r) => `${r.product_name} x${r.quantity}`).join(', ')}`;
+    if (refundNaqd > 0) logRefundCashMovement(data, { amount: refundNaqd, payment_method: 'naqd', note: refundNote, user: req.user });
+    if (refundKarta > 0) logRefundCashMovement(data, { amount: refundKarta, payment_method: 'karta', note: refundNote, user: req.user });
+  }
+
+  if (isFullReturn) {
+    data.sale_items = data.sale_items.filter((item) => item.sale_id != req.params.id);
+    data.sales = data.sales.filter((s) => s.id != req.params.id);
+  } else {
+    const returnedIds = new Set(itemsToReturn.map((i) => i.id));
+    data.sale_items = data.sale_items.filter((item) => !(item.sale_id == req.params.id && returnedIds.has(item.id)));
+    if (!Array.isArray(sale.return_history)) sale.return_history = [];
+    sale.return_history.push({
+      at: now,
+      by: req.user?.full_name || null,
+      kind: 'partial_return',
+      items: returnedSummary,
+      returnedValue: financials.returnedValue,
+      refund: { naqd: refundNaqd, karta: refundKarta },
+    });
+  }
+
   writeData(data);
-  res.json({ success: true, writtenOff });
+  res.json({ success: true, writtenOff, partial: !isFullReturn, refunded: { naqd: refundNaqd, karta: refundKarta } });
 });
 
-// (yangi) Qarzni yopish — mijoz to'lamay qolgan (masalan mijoz
+// (yangi/39) Qarzni yopish — mijoz to'lamay qolgan (masalan mijoz
 // o'chirilishidan oldin) sotuvning qarz qoldig'ini yopish uchun.
-// Yuqoridagi DELETE /:id (33) dan farqli o'laroq, bu YO'Q QILMAYDI —
-// sotuv yozuvi va uning tarixi (chek, summalar) butunlay saqlanib
-// qoladi, faqat: (1) har bir tovar-band uchun holati bo'yicha —
-// 'sellable' bo'lsa qoldiqqa qaytariladi, 'defective' bo'lsa
-// hisobdan chiqariladi (stock_writeoffs) — ombor to'g'irlanadi, va
-// (2) sotuvning debt_remaining'i nolga tushiriladi (shu bilan
-// "kutilayotgan foyda" hisobidan ham avtomatik chiqib ketadi, chunki
-// /profit formulasi margin * debt_remaining/total_amount ko'rinishida).
-// Mahsulotsiz (qo'lda kiritilgan eski qarz, is_manual_debt) sotuvlarda
-// sale_items bo'lmaydi — bunday holda shunchaki qarz kechiriladi.
+// Yuqoridagi DELETE /:id (29/33) dan farqli o'laroq, bu chekni YO'Q
+// QILMAYDI — sotuv yozuvi tarix uchun saqlanib qoladi, faqat: (1) har bir
+// tovar-band uchun holati bo'yicha — 'sellable' bo'lsa qoldiqqa
+// qaytariladi, 'defective' bo'lsa hisobdan chiqariladi (stock_writeoffs),
+// (2) mahsulotlar chekdan olib tashlanadi (aks holda /profit hisoboti
+// ularning tan narxini noto'g'ri hisoblab qolaveradi) va (3) sotuvning
+// barcha summalari (subtotal/chegirma/jami/tan narx/marja/qarz) nolga
+// tushiriladi. Agar mijoz bu chek uchun OLDINDAN biroz naqd/karta to'lagan
+// bo'lsa-yu, endi tovar qaytarib olinayotgan bo'lsa — o'sha to'langan
+// qismni ham mijozga jismonan qaytarib berish SHART (DELETE /:id dagi bilan
+// bir xil `refund: { naqd, karta }` mexanizmi). Mahsulotsiz (qo'lda
+// kiritilgan eski qarz, is_manual_debt) sotuvlarda sale_items bo'lmaydi —
+// bunday holda hech qanday tovar/pul harakati yo'q, shunchaki qarz
+// kechiriladi.
 router.post('/:id/close-debt', authRequired, (req, res) => {
   const data = readData();
   const sale = data.sales.find((s) => s.id == req.params.id);
@@ -289,66 +311,57 @@ router.post('/:id/close-debt', authRequired, (req, res) => {
   const remaining = Number(sale.debt_remaining ?? sale.debt_amount ?? 0);
   if (remaining <= 0) return res.status(400).json({ error: "Bu xariddan qarz qoldig'i yo'q" });
 
-  const itemConditions = (req.body && typeof req.body.itemConditions === 'object' && req.body.itemConditions) || {};
-  if (!Array.isArray(data.stock_writeoffs)) data.stock_writeoffs = [];
   const now = new Date().toISOString();
-  const writtenOff = [];
-  let restockedCount = 0;
-  let writtenOffCount = 0;
+  const allItems = data.sale_items.filter((item) => item.sale_id == sale.id);
+
+  if (allItems.length === 0) {
+    sale.debt_remaining = 0;
+    sale.debt_closed_at = now;
+    sale.debt_closed_by = req.user.id;
+    sale.debt_resolution = 'forgiven';
+    writeData(data);
+    return res.json({ success: true, writtenOff: [], resolution: 'forgiven', refunded: { naqd: 0, karta: 0 } });
+  }
+
+  const itemConditions = (req.body && typeof req.body.itemConditions === 'object' && req.body.itemConditions) || {};
   const customerName = sale.customer_id ? data.customers.find((c) => c.id == sale.customer_id)?.full_name || null : null;
 
-  for (const it of data.sale_items.filter((item) => item.sale_id == sale.id)) {
-    const product = data.products.find((p) => p.id == it.product_id);
-    const isDefective = itemConditions[it.id] === 'defective';
-    if (!product) continue;
+  // MUHIM: avval PUL hisob-kitobini (o'zgartirmasdan) tekshiramiz — DELETE
+  // /:id dagi bilan bir xil sabab (yuqoridagi izohga qarang).
+  const { returnedSubtotal, returnedCost } = computeItemsValue(data, allItems);
+  const financials = computeReturnFinancials(sale, returnedSubtotal, returnedCost);
 
-    if (!isDefective) {
-      product.quantity += Number(it.quantity || 0);
-      restockedCount++;
-      logStockMovement(data, {
-        product_id: product.id,
-        product_name: it.product_name || product.name,
-        type: 'qaytarish',
-        quantity_delta: Number(it.quantity || 0),
-        unit_price: it.unit_price,
-        customer_name: customerName,
-        source_type: 'sale',
-        source_id: sale.id,
-        performed_by: req.user?.full_name,
-        note: "Qarz yopildi — qoldiqqa qaytarildi",
-      });
-    } else {
-      const unitCost = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
-      const quantity = Number(it.quantity || 0);
-      const writeoffId = nextId(data, 'stock_writeoffs');
-      data.stock_writeoffs.push({
-        id: writeoffId,
-        sale_id: sale.id,
-        sale_item_id: it.id,
-        product_id: product.id,
-        product_name: it.product_name || product.name,
-        quantity,
-        unit_cost: unitCost,
-        total_cost: unitCost * quantity,
-        reason: 'qarz_yopish',
-        user_id: req.user.id,
-        created_at: now,
-      });
-      writtenOff.push({ product_name: it.product_name || product.name, quantity });
-      writtenOffCount++;
-      logStockMovement(data, {
-        product_id: product.id,
-        product_name: it.product_name || product.name,
-        type: 'hisobdan_chiqarish',
-        quantity_delta: 0,
-        unit_cost: unitCost,
-        customer_name: customerName,
-        source_type: 'stock_writeoff',
-        source_id: writeoffId,
-        performed_by: req.user?.full_name,
-        note: 'Qarz yopildi — mahsulot yaroqsiz, hisobdan chiqarildi',
-      });
-    }
+  const refundInput = (req.body && typeof req.body.refund === 'object' && req.body.refund) || {};
+  const refund = { naqd: Math.max(0, Number(refundInput.naqd) || 0), karta: Math.max(0, Number(refundInput.karta) || 0) };
+  const providedRefund = refund.naqd + refund.karta;
+
+  if (financials.remainderNeedingRefund > 0 && Math.abs(providedRefund - financials.remainderNeedingRefund) > 1) {
+    return res.status(400).json({
+      error: `Mijoz bu xarid uchun allaqachon ${Math.round(financials.remainderNeedingRefund).toLocaleString('uz-UZ')} so'm to'lagan — mahsulot(lar) qaytarib olinayotgani uchun buni naqd/karta bo'yicha qanday qaytarib berganingizni ko'rsating.`,
+      remainderNeedingRefund: financials.remainderNeedingRefund,
+    });
+  }
+
+  const { writtenOff, returnedSummary, restockedCount, writtenOffCount } = processReturnItems(data, {
+    saleItems: allItems,
+    itemConditions,
+    customerName,
+    performedBy: req.user?.full_name,
+    saleId: sale.id,
+    now,
+    restockNote: "Qarz yopildi — qoldiqqa qaytarildi",
+    writeoffNote: 'Qarz yopildi — mahsulot yaroqsiz, hisobdan chiqarildi',
+    writeoffReason: 'qarz_yopish',
+  });
+
+  const { refundNaqd, refundKarta } = applyReturnToSale(sale, financials, refund);
+
+  data.sale_items = data.sale_items.filter((item) => item.sale_id != sale.id);
+
+  if (refundNaqd > 0 || refundKarta > 0) {
+    const refundNote = `Chek #${sale.id}${customerName ? ' — ' + customerName : ''} qarzi yopildi, oldindan to'langan qism qaytarildi`;
+    if (refundNaqd > 0) logRefundCashMovement(data, { amount: refundNaqd, payment_method: 'naqd', note: refundNote, user: req.user });
+    if (refundKarta > 0) logRefundCashMovement(data, { amount: refundKarta, payment_method: 'karta', note: refundNote, user: req.user });
   }
 
   sale.debt_remaining = 0;
@@ -362,8 +375,18 @@ router.post('/:id/close-debt', authRequired, (req, res) => {
         ? 'restock'
         : 'forgiven';
 
+  if (!Array.isArray(sale.return_history)) sale.return_history = [];
+  sale.return_history.push({
+    at: now,
+    by: req.user?.full_name || null,
+    kind: 'close_debt',
+    items: returnedSummary,
+    returnedValue: financials.returnedValue,
+    refund: { naqd: refundNaqd, karta: refundKarta },
+  });
+
   writeData(data);
-  res.json({ success: true, writtenOff, resolution: sale.debt_resolution });
+  res.json({ success: true, writtenOff, resolution: sale.debt_resolution, refunded: { naqd: refundNaqd, karta: refundKarta } });
 });
 
 export default router;
