@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
+import { printReceipt, downloadReceiptPdf, buildSaleReceiptData } from '../lib/receipt.js';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -60,6 +61,10 @@ export default function Pos() {
   const [discountType, setDiscountType] = useState(saved?.discountType || 'none');
   const [discountValue, setDiscountValue] = useState(saved?.discountValue || '');
   const customerBoxRef = useRef(null);
+  // (29/40) Har bir tugallangan sotuvdan keyin chek — mijozga chop etib
+  // berish yoki PDF qilib yuklab olish uchun. Savat tozalanishidan OLDIN
+  // shu yerga saqlab qo'yiladi.
+  const [lastReceipt, setLastReceipt] = useState(null);
 
   useEffect(() => {
     api.listProducts().then(setProducts);
@@ -207,7 +212,7 @@ export default function Pos() {
         paidNaqd = debtPaidNaqd === '' ? 0 : Number(debtPaidNaqd) || 0;
         paidKarta = debtPaidKarta === '' ? 0 : Number(debtPaidKarta) || 0;
       }
-      await api.createSale({
+      const result = await api.createSale({
         customer_id: customerId || null,
         items: cart.map(({ product_id, product_name, quantity, unit_price }) => ({ product_id, product_name, quantity, unit_price })),
         paid_naqd: paidNaqd,
@@ -216,6 +221,21 @@ export default function Pos() {
         discount_value: discountType === 'none' ? 0 : Number(discountValue) || 0,
       });
       setMessage('✅ Sotuv muvaffaqiyatli amalga oshirildi!');
+      // (29/40) Chek ma'lumotini savat tozalanishidan OLDIN saqlab qolamiz.
+      setLastReceipt({
+        sale: {
+          id: result.id,
+          created_at: new Date().toISOString(),
+          subtotal_amount: result.subtotal_amount,
+          discount_amount: result.discount_amount,
+          total_amount: result.total_amount,
+          paid_naqd: result.paid_naqd,
+          paid_karta: result.paid_karta,
+          debt_amount: result.debt_amount,
+        },
+        items: cart.map((it) => ({ product_name: it.product_name, quantity: it.quantity, unit_price: it.unit_price, total_price: it.quantity * it.unit_price })),
+        customerName: customerId ? customers.find((c) => c.id == customerId)?.full_name || null : null,
+      });
       setCart([]);
       setCustomerId('');
       setCustomerSearch('');
@@ -559,6 +579,48 @@ export default function Pos() {
               <button className="btn" style={{ flex: 1 }}>Saqlash va tanlash</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {lastReceipt && (
+        <div className="modal-overlay" onClick={() => setLastReceipt(null)}>
+          <div className="modal" style={{ maxWidth: 420 }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>✅ Chek #{lastReceipt.sale.id}</h3>
+            <table>
+              <thead><tr><th>Mahsulot</th><th>Miqdor</th><th>Summa</th></tr></thead>
+              <tbody>
+                {lastReceipt.items.map((it, i) => (
+                  <tr key={i}>
+                    <td>{it.product_name}</td>
+                    <td>{it.quantity}</td>
+                    <td>{money(it.total_price)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, margin: '10px 0' }}>
+              <span>Jami</span><span>{money(lastReceipt.sale.total_amount)}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ flex: 1 }}
+                onClick={() => printReceipt(buildSaleReceiptData(lastReceipt.sale, lastReceipt.items, { customerName: lastReceipt.customerName }))}
+              >
+                🖨️ Chop etish
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ flex: 1 }}
+                onClick={() => downloadReceiptPdf(buildSaleReceiptData(lastReceipt.sale, lastReceipt.items, { customerName: lastReceipt.customerName }), `chek-${lastReceipt.sale.id}.pdf`)}
+              >
+                ⬇️ PDF yuklab olish
+              </button>
+            </div>
+            <button className="btn" style={{ width: '100%', marginTop: 8 }} onClick={() => setLastReceipt(null)}>Yopish</button>
+          </div>
         </div>
       )}
     </div>
