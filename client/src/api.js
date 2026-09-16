@@ -64,8 +64,12 @@ export const api = {
   listSales: (from, to) => request(`/sales${from && to ? `?from=${from}&to=${to}` : ''}`),
   getSale: (id) => request(`/sales/${id}`),
   createSale: (payload) => request('/sales', { method: 'POST', body: JSON.stringify(payload) }),
-  deleteSale: (id, itemConditions) => request(`/sales/${id}`, { method: 'DELETE', body: JSON.stringify({ itemConditions: itemConditions || {} }) }),
-  closeSaleDebt: (id, itemConditions) => request(`/sales/${id}/close-debt`, { method: 'POST', body: JSON.stringify({ itemConditions: itemConditions || {} }) }),
+  // (29/39) `payload` endi { itemConditions, returnItemIds, refund } ko'rinishida
+  // bo'lishi mumkin — returnItemIds bilan chekdagi faqat ba'zi mahsulotlarni
+  // tanlab qaytarish, refund bilan esa mijozga naqd/karta qanday qaytarib
+  // berilganini ko'rsatish mumkin (agar kerak bo'lsa).
+  deleteSale: (id, payload) => request(`/sales/${id}`, { method: 'DELETE', body: JSON.stringify(payload || {}) }),
+  closeSaleDebt: (id, payload) => request(`/sales/${id}/close-debt`, { method: 'POST', body: JSON.stringify(payload || {}) }),
 
   listCashMovements: () => request('/cash-movements'),
   createCashMovement: (payload) => request('/cash-movements', { method: 'POST', body: JSON.stringify(payload) }),
