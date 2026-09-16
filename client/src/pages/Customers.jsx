@@ -32,6 +32,9 @@ export default function Customers() {
   // bo'lsa-yu, endi mahsulot(lar) qaytarib olinayotgan bo'lsa — o'sha
   // to'langan qismni ham qanday qaytarib berilganini kiritish kerak.
   const [closeDebtRefund, setCloseDebtRefund] = useState({ naqd: '', karta: '' });
+  // (39) Xarid qatoridagi "Ko'rish" — qaysi mahsulot(lar) sotilgani va
+  // aniq naqd/karta/qarz bo'linishini ko'rsatadi (faqat ko'rish, o'zgartirmaydi).
+  const [viewSaleModal, setViewSaleModal] = useState(null);
 
   function load() {
     api.listCustomers().then(setCustomers);
@@ -75,6 +78,15 @@ export default function Customers() {
       load();
     } catch (err) {
       alert(err.message || "Qarz qo'shishda xatolik yuz berdi");
+    }
+  }
+
+  async function openViewSale(sale) {
+    try {
+      const d = await api.getSale(sale.id);
+      setViewSaleModal(d);
+    } catch (e) {
+      alert(e.message || "Sotuv ma'lumotini olishda xatolik yuz berdi");
     }
   }
 
@@ -279,6 +291,11 @@ export default function Customers() {
                       <td>{money(remaining)}</td>
                       <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {s.is_manual_debt && <span className="badge" style={{ fontSize: 10 }}>Eski qarz</span>}
+                        {!s.is_manual_debt && (
+                          <button className="btn secondary" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => openViewSale(s)}>
+                            Ko'rish
+                          </button>
+                        )}
                         {remaining > 0 && (
                           <button className="btn secondary" style={{ fontSize: 12, padding: '4px 8px' }} onClick={() => openCloseDebt(s)}>
                             Qarzni yopish
@@ -383,6 +400,76 @@ export default function Customers() {
               <button className="btn" style={{ flex: 1 }} disabled={closeDebtBusy}>Tasdiqlash</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {viewSaleModal && (
+        <div className="modal-overlay" onClick={() => setViewSaleModal(null)}>
+          <div className="modal" style={{ maxWidth: 560 }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ marginTop: 0 }}>Chek #{viewSaleModal.sale.id}</h3>
+            <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 12 }}>
+              {new Date(viewSaleModal.sale.created_at).toLocaleString('uz-UZ')}
+            </div>
+            <table>
+              <thead><tr><th>Mahsulot</th><th>Miqdor</th><th>Narx</th><th>Summa</th></tr></thead>
+              <tbody>
+                {viewSaleModal.items.map((it) => (
+                  <tr key={it.id}>
+                    <td>{it.product_name}</td>
+                    <td>{it.quantity}</td>
+                    <td>{money(it.unit_price)}</td>
+                    <td>{money(it.total_price)}</td>
+                  </tr>
+                ))}
+                {viewSaleModal.items.length === 0 && <tr><td colSpan={4} style={{ color: 'var(--text-dim)' }}>Mahsulot yo'q</td></tr>}
+              </tbody>
+            </table>
+            <div className="card" style={{ background: 'var(--panel-light)', padding: 12, margin: '12px 0' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                <span>Oraliq summa</span><span>{money(viewSaleModal.sale.subtotal_amount)}</span>
+              </div>
+              {Number(viewSaleModal.sale.discount_amount) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4, color: 'var(--red)' }}>
+                  <span>Chegirma</span><span>-{money(viewSaleModal.sale.discount_amount)}</span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, marginBottom: 8 }}>
+                <span>Jami</span><span>{money(viewSaleModal.sale.total_amount)}</span>
+              </div>
+              {Number(viewSaleModal.sale.paid_naqd) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span>💵 Naqd to'langan</span><span>{money(viewSaleModal.sale.paid_naqd)}</span>
+                </div>
+              )}
+              {Number(viewSaleModal.sale.paid_karta) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
+                  <span>💳 Karta to'langan</span><span>{money(viewSaleModal.sale.paid_karta)}</span>
+                </div>
+              )}
+              {Number(viewSaleModal.sale.debt_remaining ?? viewSaleModal.sale.debt_amount) > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--red)' }}>
+                  <span>Qarz qoldig'i</span><span>{money(viewSaleModal.sale.debt_remaining ?? viewSaleModal.sale.debt_amount)}</span>
+                </div>
+              )}
+            </div>
+            {viewSaleModal.sale.return_history && viewSaleModal.sale.return_history.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <h4 style={{ marginBottom: 6 }}>Qaytarishlar tarixi</h4>
+                {viewSaleModal.sale.return_history.map((r, idx) => (
+                  <div key={idx} className="card" style={{ padding: 10, fontSize: 12, marginBottom: 6 }}>
+                    <div style={{ color: 'var(--text-dim)' }}>{new Date(r.at).toLocaleString('uz-UZ')} — {r.by}</div>
+                    <div>{r.items.map((i) => `${i.product_name} x${i.quantity}`).join(', ')}</div>
+                    <div>Qaytarilgan summa: {money(r.returnedValue)}
+                      {(Number(r.refund?.naqd) > 0 || Number(r.refund?.karta) > 0) && (
+                        <> — mijozga qaytarib berildi: {Number(r.refund.naqd) > 0 && `💵 ${money(r.refund.naqd)}`} {Number(r.refund.karta) > 0 && `💳 ${money(r.refund.karta)}`}</>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button className="btn secondary" style={{ width: '100%' }} onClick={() => setViewSaleModal(null)}>Yopish</button>
+          </div>
         </div>
       )}
     </div>
