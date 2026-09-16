@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { printReceipt, downloadReceiptPdf, buildSaleReceiptData } from '../lib/receipt.js';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -127,7 +128,10 @@ export default function Reports() {
   async function openViewModal(sale) {
     try {
       const detail = await api.getSale(sale.id);
-      setViewModal(detail);
+      // (40) `sales` ro'yxatidagi qatorda customer_name/seller_name
+      // allaqachon bor (GET /sales join qilib beradi) — chekda ko'rsatish
+      // uchun shu yerga qo'shib qo'yamiz (GET /sales/:id ularni bermaydi).
+      setViewModal({ ...detail, sale: { ...detail.sale, customer_name: sale.customer_name, seller_name: sale.seller_name } });
     } catch (e) {
       alert(e.message || "Sotuv ma'lumotini olishda xatolik yuz berdi");
     }
@@ -447,7 +451,25 @@ export default function Reports() {
                 ))}
               </div>
             )}
-            <button className="btn secondary" style={{ width: '100%' }} onClick={() => setViewModal(null)}>Yopish</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ flex: 1 }}
+                onClick={() => printReceipt(buildSaleReceiptData(viewModal.sale, viewModal.items, { customerName: viewModal.sale.customer_name, sellerName: viewModal.sale.seller_name }))}
+              >
+                🖨️ Chop etish
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ flex: 1 }}
+                onClick={() => downloadReceiptPdf(buildSaleReceiptData(viewModal.sale, viewModal.items, { customerName: viewModal.sale.customer_name, sellerName: viewModal.sale.seller_name }), `chek-${viewModal.sale.id}.pdf`)}
+              >
+                ⬇️ PDF yuklab olish
+              </button>
+            </div>
+            <button className="btn secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => setViewModal(null)}>Yopish</button>
           </div>
         </div>
       )}
