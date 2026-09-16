@@ -28,6 +28,10 @@ export default function Customers() {
   const [closeDebtItems, setCloseDebtItems] = useState([]);
   const [closeDebtConditions, setCloseDebtConditions] = useState({});
   const [closeDebtBusy, setCloseDebtBusy] = useState(false);
+  // (39) Agar shu xarid uchun mijoz OLDINDAN biroz naqd/karta to'lagan
+  // bo'lsa-yu, endi mahsulot(lar) qaytarib olinayotgan bo'lsa — o'sha
+  // to'langan qismni ham qanday qaytarib berilganini kiritish kerak.
+  const [closeDebtRefund, setCloseDebtRefund] = useState({ naqd: '', karta: '' });
 
   function load() {
     api.listCustomers().then(setCustomers);
@@ -90,6 +94,7 @@ export default function Customers() {
   async function openCloseDebt(sale) {
     setCloseDebtBusy(false);
     setCloseDebtConditions({});
+    setCloseDebtRefund({ naqd: '', karta: '' });
     setCloseDebtModal(sale);
     try {
       const { items } = await api.getSale(sale.id);
@@ -99,14 +104,32 @@ export default function Customers() {
     }
   }
 
+  // (39) Server bilan bir xil formula — barcha mahsulot(lar) qaytarib
+  // olinganda mijozga qaytarib berish kerak bo'lgan summani OLDINDAN
+  // ko'rsatish uchun (chekning to'langan-qarz bo'lmagan qismi).
+  function closeDebtRemainderNeedingRefund() {
+    if (!closeDebtModal || closeDebtItems.length === 0) return 0;
+    const totalAmount = Number(closeDebtModal.total_amount || 0);
+    const debtRemaining = Number(closeDebtModal.debt_remaining ?? closeDebtModal.debt_amount ?? 0);
+    return Math.round(Math.max(0, totalAmount - debtRemaining));
+  }
+
   async function handleCloseDebt(e) {
     e.preventDefault();
+    const remainder = closeDebtRemainderNeedingRefund();
+    const refundNaqd = Number(closeDebtRefund.naqd) || 0;
+    const refundKarta = Number(closeDebtRefund.karta) || 0;
+    if (remainder > 0 && Math.abs(refundNaqd + refundKarta - remainder) > 1) {
+      alert(`Mijozga qaytarilishi kerak bo'lgan summa (${money(remainder)}) bilan kiritilgan naqd+karta yig'indisi mos kelmayapti.`);
+      return;
+    }
     setCloseDebtBusy(true);
     try {
-      await api.closeSaleDebt(closeDebtModal.id, closeDebtConditions);
+      await api.closeSaleDebt(closeDebtModal.id, { itemConditions: closeDebtConditions, refund: { naqd: refundNaqd, karta: refundKarta } });
       setCloseDebtModal(null);
       setCloseDebtItems([]);
       setCloseDebtConditions({});
+      setCloseDebtRefund({ naqd: '', karta: '' });
       if (detail) await openDetail(detail.customer);
       load();
     } catch (err) {
@@ -313,6 +336,41 @@ export default function Customers() {
                     </select>
                   </div>
                 ))}
+                {closeDebtRemainderNeedingRefund() > 0 && (
+                  <div className="card" style={{ background: 'var(--panel-light)', padding: 12, marginTop: 10 }}>
+                    <div style={{ fontSize: 13, color: 'var(--red)', marginBottom: 8 }}>
+                      Mijoz bu xarid uchun allaqachon <strong>{money(closeDebtRemainderNeedingRefund())}</strong> to'lagan — mahsulot(lar) qaytarib olinayotgani uchun buni qanday qaytarib berganingizni kiriting:
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <div className="form-row" style={{ marginBottom: 0, flex: 1 }}>
+                        <label>💵 Naqd</label>
+                        <input
+                          type="number"
+                          value={closeDebtRefund.naqd}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setCloseDebtRefund({ ...closeDebtRefund, naqd: e.target.value })}
+                        />
+                      </div>
+                      <div className="form-row" style={{ marginBottom: 0, flex: 1 }}>
+                        <label>💳 Karta</label>
+                        <input
+                          type="number"
+                          value={closeDebtRefund.karta}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => setCloseDebtRefund({ ...closeDebtRefund, karta: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn secondary"
+                      style={{ marginTop: 8, fontSize: 12, padding: '4px 8px' }}
+                      onClick={() => setCloseDebtRefund({ naqd: String(closeDebtRemainderNeedingRefund()), karta: '0' })}
+                    >
+                      Hammasini naqd qaytardim
+                    </button>
+                  </div>
+                )}
               </>
             ) : (
               <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>
