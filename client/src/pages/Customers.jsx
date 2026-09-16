@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { printReceipt, downloadReceiptPdf, buildSaleReceiptData } from '../lib/receipt.js';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -84,7 +85,9 @@ export default function Customers() {
   async function openViewSale(sale) {
     try {
       const d = await api.getSale(sale.id);
-      setViewSaleModal(d);
+      // (40) Bu oyna mijoz tarixi ichida ochilgani uchun mijoz ismi
+      // allaqachon ma'lum — chekda ko'rsatish uchun qo'shib qo'yamiz.
+      setViewSaleModal({ ...d, sale: { ...d.sale, customer_name: detail?.customer?.full_name } });
     } catch (e) {
       alert(e.message || "Sotuv ma'lumotini olishda xatolik yuz berdi");
     }
@@ -468,7 +471,25 @@ export default function Customers() {
                 ))}
               </div>
             )}
-            <button className="btn secondary" style={{ width: '100%' }} onClick={() => setViewSaleModal(null)}>Yopish</button>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ flex: 1 }}
+                onClick={() => printReceipt(buildSaleReceiptData(viewSaleModal.sale, viewSaleModal.items, { customerName: viewSaleModal.sale.customer_name }))}
+              >
+                🖨️ Chop etish
+              </button>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ flex: 1 }}
+                onClick={() => downloadReceiptPdf(buildSaleReceiptData(viewSaleModal.sale, viewSaleModal.items, { customerName: viewSaleModal.sale.customer_name }), `chek-${viewSaleModal.sale.id}.pdf`)}
+              >
+                ⬇️ PDF yuklab olish
+              </button>
+            </div>
+            <button className="btn secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => setViewSaleModal(null)}>Yopish</button>
           </div>
         </div>
       )}
