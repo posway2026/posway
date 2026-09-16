@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import { downloadReceiptPdf, buildKirimReceiptData } from '../lib/receipt.js';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -582,9 +583,12 @@ export default function SupplierDebts() {
       {docView && (
         <div className="modal-overlay" onClick={() => setDocView(null)}>
           <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 640 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <h3 style={{ marginTop: 0 }}>Kirim hujjati — {new Date(docView.date).toLocaleDateString('uz-UZ')}</h3>
-              <button type="button" className="btn secondary" onClick={() => printKirimDocument(docView)}>🖨️ Chek qilib chiqarish</button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" className="btn secondary" onClick={() => printKirimDocument(docView)}>🖨️ Chek qilib chiqarish</button>
+                <button type="button" className="btn secondary" onClick={() => downloadReceiptPdf(buildKirimReceiptData(docView), `kirim-${docView.id}.pdf`)}>⬇️ PDF yuklab olish</button>
+              </div>
             </div>
             {docView.note && <div style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 8 }}>Izoh: {docView.note}</div>}
             <table>
