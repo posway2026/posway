@@ -106,8 +106,8 @@ export async function downloadReceiptPdf(data, filename) {
     return;
   }
 
-  const pageWidth = 260;
-  const margin = 16;
+  const pageWidth = 300;
+  const margin = 18;
   const lineHeight = 14;
   const rows = data.rows || [];
   const totals = data.totals || [];
@@ -126,20 +126,43 @@ export async function downloadReceiptPdf(data, filename) {
     footerLines.length * (lineHeight - 4) +
     10;
 
-  const doc = new JsPdf({ unit: 'pt', format: [pageWidth, Math.max(180, estimatedHeight)] });
+  // MUHIM: format massividagi balandlik ENIDAN kichik bo'lib qolsa, jsPDF
+  // buni "landscape" deb hisoblab, portret rejimini majburlash uchun
+  // eni/balandligini ICHKARIDA almashtirib yuboradi — natijada barcha x
+  // koordinatalarimiz (masalan rightX = pageWidth - margin) haqiqiy
+  // sahifadan tashqariga chiqib, matn ko'rinmay/kesilib qolardi (aynan shu
+  // sabab tufayli sinovda summalar chek qog'ozidan "chala" chiqqan edi).
+  // Shuning uchun balandlik hech qachon endan kichik bo'lmasligi SHART.
+  const doc = new JsPdf({ unit: 'pt', format: [pageWidth, Math.max(pageWidth, estimatedHeight)], orientation: 'portrait' });
   let y = margin;
   const leftX = margin;
   const rightX = pageWidth - margin;
+  const centerX = pageWidth / 2;
+
+  // (40) MUHIM: jsPDF'ning o'rnatilgan {align:'right'}/{align:'center'}
+  // parametri, sinovda, uzun raqamli matnlarni sahifa chetidan tashqariga
+  // chiqarib, kesib qo'yishi kuzatildi (haqiqiy brauzerda test qilinganda
+  // topilgan xato). Shuning uchun matn kengligini o'zimiz hisoblab, chapdan
+  // boshlanadigan (default) text() bilan qo'lda joylashtiramiz — bu har
+  // doim ishonchli natija beradi.
+  function textRight(text, x, yPos) {
+    const w = doc.getTextWidth(text);
+    doc.text(text, x - w, yPos);
+  }
+  function textCenter(text, x, yPos) {
+    const w = doc.getTextWidth(text);
+    doc.text(text, x - w / 2, yPos);
+  }
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(13);
-  doc.text(String(data.title || ''), pageWidth / 2, y, { align: 'center' });
+  textCenter(String(data.title || ''), centerX, y);
   y += 18;
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   for (const line of subtitleLines) {
-    doc.text(String(line), pageWidth / 2, y, { align: 'center' });
+    textCenter(String(line), centerX, y);
     y += lineHeight - 3;
   }
   y += 6;
@@ -148,7 +171,7 @@ export async function downloadReceiptPdf(data, filename) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.text(String(data.columns[0]), leftX, y);
-    doc.text(String(data.columns[data.columns.length - 1]), rightX, y, { align: 'right' });
+    textRight(String(data.columns[data.columns.length - 1]), rightX, y);
     y += 10;
     doc.setLineWidth(0.5);
     doc.line(leftX, y, rightX, y);
@@ -160,8 +183,16 @@ export async function downloadReceiptPdf(data, filename) {
       const name = String(r[0] ?? '');
       const last = String(r[r.length - 1] ?? '');
       const mid = r.slice(1, -1).join('  x  ');
-      doc.text(name, leftX, y, { maxWidth: pageWidth * 0.5 });
-      doc.text(mid ? `${mid} = ${last}` : last, rightX, y, { align: 'right' });
+      const valueText = mid ? `${mid} = ${last}` : last;
+      // Nomi juda uzun bo'lsa, summaga joy qoldirish uchun qisqartiramiz.
+      const maxNameWidth = pageWidth - margin * 2 - doc.getTextWidth(valueText) - 10;
+      let displayName = name;
+      while (doc.getTextWidth(displayName) > maxNameWidth && displayName.length > 1) {
+        displayName = displayName.slice(0, -1);
+      }
+      if (displayName !== name) displayName = displayName.slice(0, -1) + '…';
+      doc.text(displayName, leftX, y);
+      textRight(valueText, rightX, y);
       y += lineHeight;
     }
     y += 4;
@@ -173,7 +204,7 @@ export async function downloadReceiptPdf(data, filename) {
   for (const t of totals) {
     doc.setFont('helvetica', t.bold ? 'bold' : 'normal');
     doc.text(String(t.label), leftX, y);
-    doc.text(String(t.value), rightX, y, { align: 'right' });
+    textRight(String(t.value), rightX, y);
     y += lineHeight;
   }
 
@@ -182,7 +213,7 @@ export async function downloadReceiptPdf(data, filename) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8);
     for (const line of footerLines) {
-      doc.text(String(line), pageWidth / 2, y, { align: 'center' });
+      textCenter(String(line), centerX, y);
       y += lineHeight - 4;
     }
   }
