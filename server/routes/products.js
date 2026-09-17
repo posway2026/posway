@@ -18,6 +18,27 @@ function parseNumber(value) {
   return Number(value ?? 0) || 0;
 }
 
+// (6) Mahsulotda tayyor (ishlab chiqaruvchidan kelgan) shtrix-kod bo'lmasa,
+// Posway o'zi ICHKI FOYDALANISH uchun ajratilgan EAN-13 prefiksi (20-29)
+// asosida noyob shtrix-kod yaratib beradi — bu oraliq hech qachon haqiqiy
+// mahsulot kodlari bilan to'qnashmaydi (xalqaro standart shunday belgilagan).
+function generateBarcode(id) {
+  const base = '20' + String(id).padStart(10, '0'); // 12 xonali asos
+  let sum = 0;
+  for (let i = 0; i < base.length; i++) {
+    const digit = Number(base[i]);
+    sum += i % 2 === 0 ? digit : digit * 3;
+  }
+  const check = (10 - (sum % 10)) % 10;
+  return base + String(check); // 13 xonali EAN-13
+}
+
+function barcodeTaken(data, code, excludeId) {
+  const c = String(code || '').trim();
+  if (!c) return false;
+  return data.products.some((p) => !p.is_deleted && p.id != excludeId && String(p.barcode || '').trim() === c);
+}
+
 // (yangi) Bu mahsulotga tegishli barcha kirim/qarz yozuvlari — mahsulotni
 // o'chirishda kassa/qarz ta'siri "shunchaki yo'q bo'lib qolmasligi" uchun.
 function kirimEntriesFor(data, productId) {
@@ -42,7 +63,12 @@ router.get('/', authRequired, (req, res) => {
       (p) =>
         (p.name || '').toLowerCase().includes(s) ||
         (p.brand || '').toLowerCase().includes(s) ||
-        (p.car_models || '').toLowerCase().includes(s)
+        (p.car_models || '').toLowerCase().includes(s) ||
+        // (6) Shtrix-kod skaneri qidiruv maydoniga to'g'ridan-to'g'ri
+        // raqamlarni "yozadi" — shuning uchun oddiy qidiruv ham shtrix-kod
+        // bo'yicha moslikni topishi kerak (skaner uchun aniq mos yozuv
+        // Pos.jsx'da alohida /products/barcode/:code orqali tekshiriladi).
+        String(p.barcode || '').toLowerCase().includes(s)
     );
   }
   res.json([...rows].sort((a, b) => {
@@ -55,6 +81,18 @@ router.get('/low-stock', authRequired, (req, res) => {
   const data = readData();
   const rows = data.products.map(normalizeProduct).filter((p) => !p.is_deleted && p.quantity <= p.min_quantity).sort((a, b) => a.quantity - b.quantity);
   res.json(rows);
+});
+
+// (6) Shtrix-kod skaneridan aniq (exact) moslikni topish uchun — skaner
+// odatda juda tez klaviatura terish sifatida ishlaydi, shuning uchun
+// Pos.jsx qidiruv maydoniga "Enter" bosilganda avval shu yo'l orqali aniq
+// moslikni tekshiradi, topilmasa oddiy matn qidiruviga tushadi.
+router.get('/barcode/:code', authRequired, (req, res) => {
+  const data = readData();
+  const code = String(req.params.code || '').trim();
+  const product = data.products.find((p) => !p.is_deleted && String(p.barcode || '').trim() === code);
+  if (!product) return res.status(404).json({ error: 'Bu shtrix-kod bo\'yicha mahsulot topilmadi' });
+  res.json(normalizeProduct(product));
 });
 
 // (yangi) Mahsulotni o'chirishdan oldin — unga bog'liq kirim tarixi
@@ -95,10 +133,15 @@ router.get('/:id/movements', authRequired, (req, res) => {
 // bo'lsa) — xuddi mavjud mahsulotga kirim qilingandagi kabi, chunki bu ham
 // aylanma mablag' sarfi.
 router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => {
-  const { name, brand, category, part_type, costPrice, purchase_price, sale_price, quantity, min_quantity, car_models, payment_type, supplier_name, note } = req.body;
+  const { name, brand, category, part_type, costPrice, purchase_price, sale_price, quantity, min_quantity, car_models, payment_type, supplier_name, note, barcode } = req.body;
   if (!name || !part_type) return res.status(400).json({ error: 'Nomi va turi majburiy' });
   const qty = parseNumber(quantity);
   const normalizedCostPrice = parseNumber(costPrice ?? purchase_price);
+
+  // (6) Mahsulot o'zining tayyor shtrix-kodi bilan kelgan bo'lsa, shuni
+  // ishlatamiz (boshqa mahsulotda takrorlanmasligi kerak); bo'sh qoldirilsa
+  // pastda (id ma'lum bo'lgach) Posway o'zi noyob kod yaratib beradi.
+  const trimmedBarcode = String(barcode || '').trim();
 
   // (31) Endi to'lov turidan qat'iy nazar (naqd, karta yoki nasiya) —
   // har qanday kirim ta'minotchiga bog'lanadi, shunda "qaysi tovar qaysi
@@ -114,6 +157,11 @@ router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => 
   }
 
   const data = readData();
+
+  if (trimmedBarcode && barcodeTaken(data, trimmedBarcode)) {
+    return res.status(400).json({ error: 'Bu shtrix-kod boshqa mahsulotda allaqachon ishlatilgan' });
+  }
+
   const id = nextId(data, 'products');
   const now = new Date().toISOString();
   const newProduct = {
@@ -130,6 +178,9 @@ router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => 
     quantity: qty,
     min_quantity: parseNumber(min_quantity ?? 2),
     car_models: car_models || '',
+    // (6) Tayyor kod bo'lsa o'shani, aks holda o'zimiz yaratgan noyob
+    // shtrix-kodni saqlaymiz — hech qanday mahsulot shtrix-kodsiz qolmaydi.
+    barcode: trimmedBarcode || generateBarcode(id),
     created_at: now,
     updated_at: now,
   };
@@ -187,15 +238,26 @@ router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => 
   }
 
   writeData(data);
-  res.json({ id });
+  res.json({ id, barcode: newProduct.barcode });
 });
 
 router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) => {
   const data = readData();
   const idx = data.products.findIndex((p) => p.id == req.params.id);
   if (idx === -1) return res.status(404).json({ error: 'Topilmadi' });
-  const { name, brand, category, part_type, costPrice, purchase_price, sale_price, quantity, min_quantity, car_models, sold_count, sales_count } = req.body;
+  const { name, brand, category, part_type, costPrice, purchase_price, sale_price, quantity, min_quantity, car_models, sold_count, sales_count, barcode } = req.body;
   const normalizedCostPrice = parseNumber(costPrice ?? purchase_price);
+
+  // (6) Tahrirlashda shtrix-kod ham o'zgartirilishi mumkin — lekin
+  // boshqa faol mahsulotda band qilingan kod bilan to'qnashmasligi kerak.
+  // Bo'sh qoldirilsa, mahsulot shtrix-kodsiz qolib ketmasligi uchun avtomatik
+  // yaratib beramiz (masalan eski, hali kodsiz mahsulot birinchi marta
+  // tahrirlanayotganda).
+  const trimmedBarcode = String(barcode ?? '').trim();
+  if (trimmedBarcode && barcodeTaken(data, trimmedBarcode, data.products[idx].id)) {
+    return res.status(400).json({ error: 'Bu shtrix-kod boshqa mahsulotda allaqachon ishlatilgan' });
+  }
+  const resolvedBarcode = trimmedBarcode || data.products[idx].barcode || generateBarcode(data.products[idx].id);
   const productSoldCount = Number(sold_count ?? sales_count ?? data.products[idx].sold_count ?? data.products[idx].sales_count ?? 0) || 0;
   const oldQuantity = Number(data.products[idx].quantity) || 0;
   const newQuantity = parseNumber(quantity);
@@ -213,6 +275,7 @@ router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) =
     quantity: newQuantity,
     min_quantity: parseNumber(min_quantity ?? data.products[idx].min_quantity ?? 2),
     car_models,
+    barcode: resolvedBarcode,
     updated_at: new Date().toISOString(),
   };
 
@@ -234,7 +297,23 @@ router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) =
   }
 
   writeData(data);
-  res.json({ success: true });
+  res.json({ success: true, barcode: resolvedBarcode });
+});
+
+// (6) Eski, hali shtrix-kodsiz mahsulotlar uchun — to'liq tahrirlash
+// formasini ochmasdan, ro'yxatdan bittagina tugma bosib noyob shtrix-kod
+// yaratib berish. Agar mahsulotda allaqachon kod bo'lsa, o'shani qaytaradi
+// (tasodifan qayta-qayta bosilsa ham eskisi almashtirilmaydi).
+router.post('/:id/generate-barcode', authRequired, roleRequired('admin', 'omborchi'), (req, res) => {
+  const data = readData();
+  const idx = data.products.findIndex((p) => p.id == req.params.id);
+  if (idx === -1) return res.status(404).json({ error: 'Topilmadi' });
+  if (!data.products[idx].barcode) {
+    data.products[idx].barcode = generateBarcode(data.products[idx].id);
+    data.products[idx].updated_at = new Date().toISOString();
+    writeData(data);
+  }
+  res.json({ barcode: data.products[idx].barcode });
 });
 
 // (yangi) Mahsulotni o'chirish endi hech qachon uni bog'liq kirim tarixi
