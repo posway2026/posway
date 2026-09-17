@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
+import { printBarcodeLabel, downloadBarcodeLabelPdf, buildBarcodeLabelData } from '../lib/receipt.js';
 
-const empty = { name: '', brand: '', category: '', part_type: 'original', costPrice: 0, purchase_price: 0, sale_price: 0, quantity: 0, min_quantity: 2, car_models: '', payment_type: 'naqd', supplier_name: '' };
+const empty = { name: '', brand: '', category: '', part_type: 'original', costPrice: 0, purchase_price: 0, sale_price: 0, quantity: 0, min_quantity: 2, car_models: '', payment_type: 'naqd', supplier_name: '', barcode: '' };
 
 function normalizeProduct(p = {}) {
   const costPrice = Number(p.costPrice ?? p.purchase_price ?? 0) || 0;
@@ -40,6 +41,9 @@ export default function Products() {
   const [historyProduct, setHistoryProduct] = useState(null);
   const [historyRows, setHistoryRows] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  // (6) Shtrix-kod / narx yorlig'i chop etish oynasi.
+  const [labelProduct, setLabelProduct] = useState(null);
+  const [generatingBarcode, setGeneratingBarcode] = useState(false);
   const { user } = useAuth();
   const canEdit = user.role === 'admin' || user.role === 'omborchi';
 
@@ -173,6 +177,27 @@ export default function Products() {
       setHistoryRows([]);
     } finally {
       setHistoryLoading(false);
+    }
+  }
+
+  // (6) Narx yorlig'i oynasi — shtrix-kodi yo'q eski mahsulot uchun avval
+  // "Yaratish" tugmasi ko'rsatiladi, bo'lsa to'g'ridan-to'g'ri chop
+  // etish/PDF tugmalari ishlaydi.
+  function openLabel(product) {
+    setLabelProduct(product);
+  }
+
+  async function handleGenerateBarcode() {
+    if (!labelProduct) return;
+    setGeneratingBarcode(true);
+    try {
+      const res = await api.generateProductBarcode(labelProduct.id);
+      setLabelProduct({ ...labelProduct, barcode: res.barcode });
+      load(search);
+    } catch (err) {
+      alert(err.message || "Shtrix-kod yaratishda xatolik yuz berdi");
+    } finally {
+      setGeneratingBarcode(false);
     }
   }
 
@@ -312,6 +337,7 @@ export default function Products() {
                   {p.name}
                   {p.is_deleted && <span className="badge" style={{ fontSize: 10, marginLeft: 6 }}>O'chirilgan</span>}
                   <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{p.car_models}</div>
+                  {p.barcode && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>🏷️ {p.barcode}</div>}
                 </td>
                 <td>{p.brand}</td>
                 <td>
@@ -332,6 +358,7 @@ export default function Products() {
                       <>
                         <button className="btn secondary" onClick={() => openKirim(p)}>📥 Kirim</button>
                         <button className="btn secondary" onClick={() => openHistory(p)}>🕘 Tarix</button>
+                        <button className="btn secondary" onClick={() => openLabel(p)} title="Narx yorlig'i (shtrix-kod)">🏷️</button>
                         <button className="btn secondary" onClick={() => openEdit(p)}>Tahrirlash</button>
                         {user.role === 'admin' && <button className="btn danger" onClick={() => handleDelete(p)}>O'chirish</button>}
                       </>
@@ -375,6 +402,17 @@ export default function Products() {
                 <option value="original">Original</option>
                 <option value="ishlatilgan">Ishlatilgan</option>
               </select>
+            </div>
+            {/* (6) Mahsulotda ishlab chiqaruvchidan kelgan tayyor shtrix-kod
+                bo'lsa shuni kiritish mumkin; bo'sh qoldirilsa Posway o'zi
+                noyob shtrix-kod yaratib beradi. */}
+            <div className="form-row">
+              <label>Shtrix-kod (ixtiyoriy)</label>
+              <input
+                value={form.barcode || ''}
+                onChange={(e) => setForm({ ...form, barcode: e.target.value })}
+                placeholder="Bo'sh qoldirsangiz avtomatik yaratiladi"
+              />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div className="form-row">
@@ -532,6 +570,43 @@ export default function Products() {
               </table>
             )}
             <button className="btn secondary" style={{ width: '100%', marginTop: 10 }} onClick={() => setHistoryProduct(null)}>Yopish</button>
+          </div>
+        </div>
+      )}
+
+      {labelProduct && (
+        <div className="modal-overlay" onClick={() => setLabelProduct(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 380 }}>
+            <h3 style={{ marginTop: 0 }}>🏷️ Narx yorlig'i — {labelProduct.name}</h3>
+            <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>
+              Narx: {money(labelProduct.sale_price)}
+              <div>Shtrix-kod: {labelProduct.barcode || <span style={{ color: 'var(--red)' }}>yo'q</span>}</div>
+            </div>
+            {!labelProduct.barcode ? (
+              <button className="btn" style={{ width: '100%' }} disabled={generatingBarcode} onClick={handleGenerateBarcode}>
+                {generatingBarcode ? 'Yaratilmoqda...' : '🔀 Shtrix-kod yaratish'}
+              </button>
+            ) : (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => printBarcodeLabel(buildBarcodeLabelData(labelProduct))}
+                >
+                  🖨️ Chop etish
+                </button>
+                <button
+                  type="button"
+                  className="btn secondary"
+                  style={{ flex: 1 }}
+                  onClick={() => downloadBarcodeLabelPdf(buildBarcodeLabelData(labelProduct), `yorliq-${labelProduct.id}.pdf`)}
+                >
+                  ⬇️ PDF yuklab olish
+                </button>
+              </div>
+            )}
+            <button className="btn secondary" style={{ width: '100%', marginTop: 10 }} onClick={() => setLabelProduct(null)}>Yopish</button>
           </div>
         </div>
       )}
