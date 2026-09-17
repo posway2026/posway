@@ -120,6 +120,10 @@ router.post('/', authRequired, (req, res) => {
       quantity: it.quantity,
       unit_price: it.unit_price,
       total_price: it.quantity * it.unit_price,
+      // (37) "Kafolat" — savatning shu qatoriga qo'yilgan kafolat kun soni
+      // (ixtiyoriy, standart 0 = kafolatsiz). Faqat chekda ko'rsatish uchun —
+      // moliyaviy hisob-kitoblarga (foyda, qarz va h.k.) ta'sir qilmaydi.
+      warranty_days: Math.max(0, Math.round(Number(it.warranty_days) || 0)),
     });
     const p = data.products.find((pp) => pp.id == it.product_id);
     p.quantity -= it.quantity;
