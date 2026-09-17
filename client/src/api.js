@@ -41,6 +41,10 @@ export const api = {
   restoreProduct: (id) => request(`/products/${id}/restore`, { method: 'POST' }),
   stockIn: (id, payload) => request(`/products/${id}/kirim`, { method: 'POST', body: JSON.stringify(payload) }),
   productMovements: (id) => request(`/products/${id}/movements`),
+  // (6) Shtrix-kod skaneri uchun aniq mos mahsulotni topish, va eski
+  // (hali kodsiz) mahsulotga bittasini avtomatik yaratib berish.
+  getProductByBarcode: (code) => request(`/products/barcode/${encodeURIComponent(code)}`),
+  generateProductBarcode: (id) => request(`/products/${id}/generate-barcode`, { method: 'POST' }),
 
   listCustomers: () => request('/customers'),
   getCustomer: (id) => request(`/customers/${id}`),
