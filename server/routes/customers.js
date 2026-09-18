@@ -18,8 +18,25 @@ function currentDebtFor(data, customerId) {
     .reduce((sum, s) => sum + Number(s.debt_remaining ?? s.debt_amount ?? 0), 0);
 }
 
+// (1) Qarzning to'lov muddati — har bir qarzli sotuv (yoki qo'lda
+// kiritilgan eski qarz) o'zining ixtiyoriy due_date maydoniga ega
+// bo'lishi mumkin. Mijozlar ro'yxatida eng yaqin muddatni va
+// "muddati o'tganmi" belgisini ko'rsatish uchun bu yerda hisoblaymiz —
+// haqiqiy tekshiruv har doim sana-string solishtirish orqali (soat
+// mintaqasi muammosidan qochish uchun sanalar doim "YYYY-MM-DD" holida
+// saqlanadi).
+function debtDueSummary(data, customerId) {
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const dueSales = data.sales.filter(
+    (s) => s.customer_id == customerId && Number(s.debt_remaining ?? s.debt_amount ?? 0) > 0 && s.due_date
+  );
+  if (dueSales.length === 0) return { nearest_due_date: null, overdue_debt: false };
+  const sorted = dueSales.slice().sort((a, b) => (a.due_date < b.due_date ? -1 : 1));
+  return { nearest_due_date: sorted[0].due_date, overdue_debt: sorted.some((s) => s.due_date < todayISO) };
+}
+
 function withDebt(data, c) {
-  return { ...c, current_debt: currentDebtFor(data, c.id) };
+  return { ...c, current_debt: currentDebtFor(data, c.id), ...debtDueSummary(data, c.id) };
 }
 
 router.get('/', authRequired, (req, res) => {
@@ -116,7 +133,7 @@ router.post('/:id/pay', authRequired, (req, res) => {
 // savdo" statistikasida noto'g'ri ravishda "bugungi savdo" bo'lib
 // ko'rinmaydi.
 router.post('/:id/old-debt', authRequired, (req, res) => {
-  const { amount, note, date } = req.body;
+  const { amount, note, date, due_date } = req.body;
   if (!amount || amount <= 0) return res.status(400).json({ error: "Summani to'g'ri kiriting" });
   const data = readData();
   const customerId = +req.params.id;
@@ -142,10 +159,28 @@ router.post('/:id/old-debt', authRequired, (req, res) => {
     is_manual_debt: true,
     note: note || "Ilovadan oldingi eski qarz",
     payment_type: 'qarz',
+    // (1) Qarz to'lov muddati — ixtiyoriy, "YYYY-MM-DD" ko'rinishida saqlanadi.
+    due_date: due_date ? String(due_date).slice(0, 10) : null,
     created_at,
   });
   writeData(data);
   res.json({ success: true, id: saleId });
+});
+
+// (1) Har qanday qarzli sotuv (oddiy xarid ham, qo'lda kiritilgan eski
+// qarz ham) uchun to'lov muddatini keyinroq belgilash/o'zgartirish/
+// tozalash. Faqat shu mijozga tegishli sotuvga ta'sir qilishini
+// tekshiramiz (boshqa mijozning sotuvini tasodifan o'zgartirmaslik uchun).
+router.put('/:id/sales/:saleId/due-date', authRequired, (req, res) => {
+  const data = readData();
+  const customerId = +req.params.id;
+  const saleId = +req.params.saleId;
+  const sale = data.sales.find((s) => s.id == saleId && s.customer_id == customerId);
+  if (!sale) return res.status(404).json({ error: 'Qarz yozuvi topilmadi' });
+  const { due_date } = req.body;
+  sale.due_date = due_date ? String(due_date).slice(0, 10) : null;
+  writeData(data);
+  res.json({ success: true });
 });
 
 // (yangi) Mijozni o'chirish endi haqiqiy sotuv tarixini hech qachon
