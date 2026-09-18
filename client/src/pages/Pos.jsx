@@ -6,6 +6,13 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
+// (1) Qo'lda sana kiritish (kalendar) noqulay/xatoga moyil bo'lgani uchun
+// eng ko'p ishlatiladigan muddatlarni bitta bosish bilan tanlash imkonini
+// beramiz — aniq sana kerak bo'lsa, pastdagi kalendar ham qoladi.
+function daysFromToday(days) {
+  return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+}
+
 const CARTS_STORAGE_KEY = 'gm0064_pos_carts_v2';
 const LEGACY_CART_STORAGE_KEY = 'gm0064_pos_cart_v1';
 // (36) Bir vaqtda ochiq bo'lishi mumkin bo'lgan savatlar soni chegarasi.
@@ -22,6 +29,8 @@ function makeEmptyCart(label) {
     discountValue: '',
     debtPaidNaqd: '',
     debtPaidKarta: '',
+    // (1) Qarzga sotishda to'lov muddati (ixtiyoriy, "YYYY-MM-DD").
+    debtDueDate: '',
     mixedOpen: false,
     mixedNaqd: '',
     mixedKarta: '',
@@ -54,6 +63,7 @@ function loadSavedCarts() {
         discountValue: legacy.discountValue || '',
         debtPaidNaqd: legacy.debtPaidNaqd || '',
         debtPaidKarta: legacy.debtPaidKarta || '',
+        debtDueDate: legacy.debtDueDate || '',
         mixedOpen: legacy.mixedOpen || false,
         mixedNaqd: legacy.mixedNaqd || '',
         mixedKarta: legacy.mixedKarta || '',
@@ -333,6 +343,7 @@ export default function Pos() {
         paid_karta: paidKarta,
         discount_type: activeCart.discountType === 'none' ? null : activeCart.discountType,
         discount_value: activeCart.discountType === 'none' ? 0 : Number(activeCart.discountValue) || 0,
+        due_date: mode === 'qarz' ? (activeCart.debtDueDate || null) : null,
       });
       setMessage('✅ Sotuv muvaffaqiyatli amalga oshirildi!');
       // (29/40) Chek ma'lumotini savat tozalanishidan OLDIN saqlab qolamiz.
@@ -364,6 +375,7 @@ export default function Pos() {
         customerSearch: '',
         debtPaidNaqd: '',
         debtPaidKarta: '',
+        debtDueDate: '',
         mixedOpen: false,
         mixedNaqd: '',
         mixedKarta: '',
@@ -777,6 +789,51 @@ export default function Pos() {
             <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
               Qarzga qoladi: {money(Math.max(0, total - (Number(activeCart.debtPaidNaqd) || 0) - (Number(activeCart.debtPaidKarta) || 0)))}
             </div>
+
+            {/* (1) To'lov muddati — tezkor tugmalar asosiy usul (kalendarga
+                qo'lda sana kiritish noqulay/xato bo'lib chiqishi mumkin),
+                aniq boshqa sana kerak bo'lsa pastdagi kalendar ham bor. */}
+            <div className="form-row" style={{ marginTop: 8 }}>
+              <label>To'lov muddati (ixtiyoriy)</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[
+                  { label: '+7 kun', days: 7 },
+                  { label: '+15 kun', days: 15 },
+                  { label: '+30 kun', days: 30 },
+                ].map((opt) => (
+                  <button
+                    key={opt.days}
+                    type="button"
+                    className={`btn secondary ${activeCart.debtDueDate === daysFromToday(opt.days) ? '' : ''}`}
+                    style={{
+                      flex: 1,
+                      fontSize: 13,
+                      ...(activeCart.debtDueDate === daysFromToday(opt.days) ? { background: 'var(--accent)', color: '#fff' } : {}),
+                    }}
+                    onClick={() => updateActiveCart({ debtDueDate: daysFromToday(opt.days) })}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+                {activeCart.debtDueDate && (
+                  <button type="button" className="btn secondary" style={{ fontSize: 13 }} onClick={() => updateActiveCart({ debtDueDate: '' })}>
+                    ✕
+                  </button>
+                )}
+              </div>
+              <input
+                type="date"
+                value={activeCart.debtDueDate}
+                onChange={(e) => updateActiveCart({ debtDueDate: e.target.value })}
+                style={{ marginTop: 6, fontSize: 13 }}
+              />
+              {activeCart.debtDueDate && (
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+                  Muddat: {new Date(activeCart.debtDueDate).toLocaleDateString('uz-UZ')}
+                </div>
+              )}
+            </div>
+
             <button className="btn secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => handleCheckout('qarz')} disabled={cart.length === 0 || !activeCart.customerId}>
               📒 Qarzga yozish
             </button>
