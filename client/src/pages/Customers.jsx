@@ -6,6 +6,37 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
+// (1) Qo'lda sana kiritish (kalendar) noqulay/xatoga moyil bo'lgani uchun
+// eng ko'p ishlatiladigan muddatlarni bitta bosish bilan tanlash imkonini
+// beramiz — aniq boshqa sana kerak bo'lsa pastdagi kalendar ham qoladi.
+function daysFromToday(days) {
+  return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+}
+
+function DueDatePicker({ value, onChange }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {[7, 15, 30].map((days) => (
+          <button
+            key={days}
+            type="button"
+            className="btn secondary"
+            style={{ flex: 1, fontSize: 13, ...(value === daysFromToday(days) ? { background: 'var(--accent)', color: '#fff' } : {}) }}
+            onClick={() => onChange(daysFromToday(days))}
+          >
+            +{days} kun
+          </button>
+        ))}
+        {value && (
+          <button type="button" className="btn secondary" style={{ fontSize: 13 }} onClick={() => onChange('')}>✕</button>
+        )}
+      </div>
+      <input type="date" value={value} onChange={(e) => onChange(e.target.value)} style={{ marginTop: 6, fontSize: 13 }} />
+    </div>
+  );
+}
+
 const RESOLUTION_LABELS = {
   writeoff: "Hisobdan chiqarildi",
   restock: "Qoldiqqa qaytarildi",
@@ -30,7 +61,7 @@ export default function Customers() {
   // qidirish va saralash — ro'yxat kattalashgani sayin kerakli mijozni
   // tezroq topish uchun.
   const [search, setSearch] = useState('');
-  const [sortBy, setSortBy] = useState('name');
+  const [sortBy, setSortBy] = useState('recent');
   const [closeDebtModal, setCloseDebtModal] = useState(null);
   const [closeDebtItems, setCloseDebtItems] = useState([]);
   const [closeDebtConditions, setCloseDebtConditions] = useState({});
@@ -126,9 +157,15 @@ export default function Customers() {
     }
     return [...list].sort((a, b) => {
       if (!!a.is_deleted !== !!b.is_deleted) return a.is_deleted ? 1 : -1;
+      if (sortBy === 'overdue') {
+        if (!!a.overdue_debt !== !!b.overdue_debt) return a.overdue_debt ? -1 : 1;
+        if (a.overdue_debt && b.overdue_debt) return new Date(a.nearest_due_date) - new Date(b.nearest_due_date);
+        return new Date(b.created_at) - new Date(a.created_at);
+      }
       if (sortBy === 'debt') return Number(b.current_debt || 0) - Number(a.current_debt || 0);
-      if (sortBy === 'recent') return new Date(b.created_at) - new Date(a.created_at);
-      return a.full_name.localeCompare(b.full_name);
+      if (sortBy === 'name') return a.full_name.localeCompare(b.full_name);
+      // standart: oxirgi qo'shilganlar birinchi
+      return new Date(b.created_at) - new Date(a.created_at);
     });
   }
 
@@ -218,10 +255,11 @@ export default function Customers() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ minWidth: 200 }}>
-          <option value="name">Saralash: Alifbo bo'yicha (A-Z)</option>
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ minWidth: 220 }}>
           <option value="recent">Saralash: Oxirgi qo'shilganlar</option>
+          <option value="overdue">Saralash: Muddati o'tganlar avval</option>
           <option value="debt">Saralash: Eng katta qarzdan</option>
+          <option value="name">Saralash: Alifbo bo'yicha (A-Z)</option>
         </select>
       </div>
 
@@ -334,7 +372,7 @@ export default function Customers() {
             </div>
             <div className="form-row">
               <label>To'lov muddati (ixtiyoriy)</label>
-              <input type="date" value={oldDebtDueDate} onChange={(e) => setOldDebtDueDate(e.target.value)} />
+              <DueDatePicker value={oldDebtDueDate} onChange={setOldDebtDueDate} />
             </div>
             <div className="form-row">
               <label>Izoh (ixtiyoriy)</label>
@@ -367,13 +405,8 @@ export default function Customers() {
                       <td>{money(remaining)}</td>
                       <td>
                         {remaining > 0 ? (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
-                            <input
-                              type="date"
-                              value={s.due_date ? s.due_date.slice(0, 10) : ''}
-                              onChange={(e) => handleSetDueDate(s, e.target.value)}
-                              style={{ fontSize: 12, padding: '4px 6px' }}
-                            />
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 150 }}>
+                            <DueDatePicker value={s.due_date ? s.due_date.slice(0, 10) : ''} onChange={(v) => handleSetDueDate(s, v)} />
                             {status === 'overdue' && <span className="badge red" style={{ fontSize: 10 }}>Muddati o'tgan!</span>}
                             {status === 'soon' && <span className="badge orange" style={{ fontSize: 10 }}>Tez orada</span>}
                           </div>
