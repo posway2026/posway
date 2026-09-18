@@ -7,7 +7,7 @@ import { computeItemsValue, processReturnItems, computeReturnFinancials, applyRe
 const router = Router();
 
 router.post('/', authRequired, (req, res) => {
-  const { customer_id, items, paid_amount, payment_type, discount_type, discount_value, paid_naqd, paid_karta } = req.body;
+  const { customer_id, items, paid_amount, payment_type, discount_type, discount_value, paid_naqd, paid_karta, due_date } = req.body;
   if (!items || items.length === 0) return res.status(400).json({ error: 'Mahsulot tanlanmagan' });
 
   const data = readData();
@@ -102,6 +102,10 @@ router.post('/', authRequired, (req, res) => {
     paid_karta: paidKarta,
     debt_amount,
     debt_remaining: debt_amount,
+    // (1) Qarzga sotishda kassadan to'g'ridan-to'g'ri to'lov muddatini
+    // belgilash mumkin (keyinroq Mijozlar → Tarix'dan ham o'zgartirish
+    // mumkin) — faqat haqiqatan ham qarz qolganda saqlanadi.
+    due_date: debt_amount > 0 && due_date ? String(due_date).slice(0, 10) : null,
     cost_amount,
     margin,
     payment_type: resolvedPaymentType,
