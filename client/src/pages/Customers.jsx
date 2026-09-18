@@ -25,6 +25,12 @@ export default function Customers() {
   const [oldDebtAmount, setOldDebtAmount] = useState('');
   const [oldDebtDate, setOldDebtDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [oldDebtNote, setOldDebtNote] = useState('');
+  const [oldDebtDueDate, setOldDebtDueDate] = useState('');
+  // (38) Mijozlar ro'yxatini ism/telefon/qarz summasi bo'yicha jonli
+  // qidirish va saralash — ro'yxat kattalashgani sayin kerakli mijozni
+  // tezroq topish uchun.
+  const [search, setSearch] = useState('');
+  const [sortBy, setSortBy] = useState('name');
   const [closeDebtModal, setCloseDebtModal] = useState(null);
   const [closeDebtItems, setCloseDebtItems] = useState([]);
   const [closeDebtConditions, setCloseDebtConditions] = useState({});
@@ -71,15 +77,59 @@ export default function Customers() {
   async function handleAddOldDebt(e) {
     e.preventDefault();
     try {
-      await api.addOldDebt(oldDebtModal.id, { amount: +oldDebtAmount, date: oldDebtDate, note: oldDebtNote });
+      await api.addOldDebt(oldDebtModal.id, { amount: +oldDebtAmount, date: oldDebtDate, note: oldDebtNote, due_date: oldDebtDueDate || null });
       setOldDebtModal(null);
       setOldDebtAmount('');
       setOldDebtNote('');
       setOldDebtDate(new Date().toISOString().slice(0, 10));
+      setOldDebtDueDate('');
       load();
     } catch (err) {
       alert(err.message || "Qarz qo'shishda xatolik yuz berdi");
     }
+  }
+
+  // (1) Tarix oynasidagi har bir qarz qatori uchun to'lov muddatini
+  // belgilash/o'zgartirish — tanlangan sanadan so'ng darhol saqlanadi.
+  async function handleSetDueDate(sale, value) {
+    try {
+      await api.setSaleDueDate(detail.customer.id, sale.id, value || null);
+      await openDetail(detail.customer);
+      load();
+    } catch (e) {
+      alert(e.message || "Muddatni saqlashda xatolik yuz berdi");
+    }
+  }
+
+  function dueDateStatus(sale, remaining) {
+    if (!sale.due_date || remaining <= 0) return null;
+    const todayISO = new Date().toISOString().slice(0, 10);
+    if (sale.due_date < todayISO) return 'overdue';
+    const in3DaysISO = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+    if (sale.due_date <= in3DaysISO) return 'soon';
+    return null;
+  }
+
+  // (38) Qidiruv (ism/telefon/qarz summasi) + saralash — mijozlar
+  // ro'yxatiga qo'llanadi, o'chirilgan mijozlar har doim oxirida qoladi.
+  function visibleCustomers() {
+    const q = search.trim().toLowerCase();
+    const qDigits = q.replace(/[^0-9]/g, '');
+    let list = customers;
+    if (q) {
+      list = list.filter((c) => {
+        const nameMatch = c.full_name?.toLowerCase().includes(q);
+        const phoneMatch = c.phone?.toLowerCase().includes(q);
+        const debtMatch = qDigits.length > 0 && String(Math.round(Number(c.current_debt || 0))).includes(qDigits);
+        return nameMatch || phoneMatch || debtMatch;
+      });
+    }
+    return [...list].sort((a, b) => {
+      if (!!a.is_deleted !== !!b.is_deleted) return a.is_deleted ? 1 : -1;
+      if (sortBy === 'debt') return Number(b.current_debt || 0) - Number(a.current_debt || 0);
+      if (sortBy === 'recent') return new Date(b.created_at) - new Date(a.created_at);
+      return a.full_name.localeCompare(b.full_name);
+    });
   }
 
   async function openViewSale(sale) {
@@ -161,11 +211,25 @@ export default function Customers() {
         <button className="btn" onClick={() => setModalOpen(true)}>+ Yangi mijoz</button>
       </div>
 
+      <div className="card" style={{ marginBottom: 12, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+        <input
+          style={{ flex: '1 1 240px' }}
+          placeholder="Ism, telefon yoki qarz summasi bo'yicha qidirish..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+        <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} style={{ minWidth: 200 }}>
+          <option value="name">Saralash: Alifbo bo'yicha (A-Z)</option>
+          <option value="recent">Saralash: Oxirgi qo'shilganlar</option>
+          <option value="debt">Saralash: Eng katta qarzdan</option>
+        </select>
+      </div>
+
       <div className="card">
         <table>
           <thead><tr><th>Ism</th><th>Telefon</th><th>Qarzi</th><th></th></tr></thead>
           <tbody>
-            {customers.map((c) => (
+            {visibleCustomers().map((c) => (
               <tr key={c.id} style={c.is_deleted ? { opacity: 0.5 } : undefined}>
                 <td>
                   {c.full_name}
@@ -174,6 +238,7 @@ export default function Customers() {
                 <td>{c.phone}</td>
                 <td>
                   <span className={`badge ${c.current_debt > 0 ? 'red' : 'green'}`}>{money(c.current_debt)}</span>
+                  {c.overdue_debt && <span className="badge red" style={{ marginLeft: 4 }}>Muddati o'tgan!</span>}
                 </td>
                 <td style={{ display: 'flex', gap: 6 }}>
                   <button className="btn secondary" onClick={() => openDetail(c)}>Tarix</button>
@@ -203,6 +268,9 @@ export default function Customers() {
               </tr>
             ))}
             {customers.length === 0 && <tr><td colSpan={4} style={{ color: 'var(--text-dim)' }}>Mijozlar yo'q</td></tr>}
+            {customers.length > 0 && visibleCustomers().length === 0 && (
+              <tr><td colSpan={4} style={{ color: 'var(--text-dim)' }}>Qidiruvga mos mijoz topilmadi</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -265,6 +333,10 @@ export default function Customers() {
               <input type="date" value={oldDebtDate} onChange={(e) => setOldDebtDate(e.target.value)} />
             </div>
             <div className="form-row">
+              <label>To'lov muddati (ixtiyoriy)</label>
+              <input type="date" value={oldDebtDueDate} onChange={(e) => setOldDebtDueDate(e.target.value)} />
+            </div>
+            <div className="form-row">
               <label>Izoh (ixtiyoriy)</label>
               <input value={oldDebtNote} onChange={(e) => setOldDebtNote(e.target.value)} placeholder="Masalan: ilovadan oldingi qarz" />
             </div>
@@ -282,16 +354,33 @@ export default function Customers() {
             <h3 style={{ marginTop: 0 }}>{detail.customer.full_name} — tarix</h3>
             <h4>Xaridlar</h4>
             <table>
-              <thead><tr><th>Sana</th><th>Jami</th><th>To'langan</th><th>Qarz qoldig'i</th><th></th></tr></thead>
+              <thead><tr><th>Sana</th><th>Jami</th><th>To'langan</th><th>Qarz qoldig'i</th><th>Muddat</th><th></th></tr></thead>
               <tbody>
                 {detail.sales.map((s) => {
                   const remaining = Number(s.debt_remaining ?? s.debt_amount ?? 0);
+                  const status = dueDateStatus(s, remaining);
                   return (
                     <tr key={s.id}>
                       <td>{new Date(s.created_at).toLocaleDateString('uz-UZ')}</td>
                       <td>{money(s.total_amount)}</td>
                       <td>{money(s.paid_amount)}</td>
                       <td>{money(remaining)}</td>
+                      <td>
+                        {remaining > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            <input
+                              type="date"
+                              value={s.due_date ? s.due_date.slice(0, 10) : ''}
+                              onChange={(e) => handleSetDueDate(s, e.target.value)}
+                              style={{ fontSize: 12, padding: '4px 6px' }}
+                            />
+                            {status === 'overdue' && <span className="badge red" style={{ fontSize: 10 }}>Muddati o'tgan!</span>}
+                            {status === 'soon' && <span className="badge orange" style={{ fontSize: 10 }}>Tez orada</span>}
+                          </div>
+                        ) : (
+                          s.due_date ? new Date(s.due_date).toLocaleDateString('uz-UZ') : '—'
+                        )}
+                      </td>
                       <td style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {s.is_manual_debt && <span className="badge" style={{ fontSize: 10 }}>Eski qarz</span>}
                         {!s.is_manual_debt && (
@@ -311,7 +400,7 @@ export default function Customers() {
                     </tr>
                   );
                 })}
-                {detail.sales.length === 0 && <tr><td colSpan={5} style={{ color: 'var(--text-dim)' }}>Xaridlar yo'q</td></tr>}
+                {detail.sales.length === 0 && <tr><td colSpan={6} style={{ color: 'var(--text-dim)' }}>Xaridlar yo'q</td></tr>}
               </tbody>
             </table>
             <h4>To'lovlar</h4>
