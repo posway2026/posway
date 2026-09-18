@@ -53,6 +53,9 @@ export const api = {
   restoreCustomer: (id) => request(`/customers/${id}/restore`, { method: 'POST' }),
   payDebt: (id, payload) => request(`/customers/${id}/pay`, { method: 'POST', body: JSON.stringify(payload) }),
   addOldDebt: (id, payload) => request(`/customers/${id}/old-debt`, { method: 'POST', body: JSON.stringify(payload) }),
+  // (1) Qarz to'lov muddatini belgilash/o'zgartirish/tozalash (due_date: null tozalaydi).
+  setSaleDueDate: (customerId, saleId, due_date) =>
+    request(`/customers/${customerId}/sales/${saleId}/due-date`, { method: 'PUT', body: JSON.stringify({ due_date }) }),
 
   listSupplierDebts: () => request('/supplier-debts'),
   supplierDebtEntries: (name) => request(`/supplier-debts/${encodeURIComponent(name)}/entries`),
