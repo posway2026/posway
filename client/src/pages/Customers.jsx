@@ -468,7 +468,7 @@ export default function Customers() {
                 </div>
                 {closeDebtItems.map((it) => (
                   <div className="form-row" key={it.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                    <span>{it.product_name} × {it.quantity}</span>
+                    <span>{it.product_name} × {it.display_quantity ?? it.quantity} {it.display_unit || ''}</span>
                     <select
                       value={closeDebtConditions[it.id] || 'sellable'}
                       onChange={(e) => setCloseDebtConditions({ ...closeDebtConditions, [it.id]: e.target.value })}
@@ -541,8 +541,8 @@ export default function Customers() {
                 {viewSaleModal.items.map((it) => (
                   <tr key={it.id}>
                     <td>{it.product_name}</td>
-                    <td>{it.quantity}</td>
-                    <td>{money(it.unit_price)}</td>
+                    <td>{it.display_quantity ?? it.quantity} {it.display_unit || ''}</td>
+                    <td>{money(it.display_unit_price ?? it.unit_price)}</td>
                     <td>{money(it.total_price)}</td>
                   </tr>
                 ))}
