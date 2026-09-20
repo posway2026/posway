@@ -3,11 +3,36 @@ import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
 import { printBarcodeLabel, downloadBarcodeLabelPdf, buildBarcodeLabelData } from '../lib/receipt.js';
 
-const empty = { name: '', brand: '', category: '', part_type: 'original', costPrice: 0, purchase_price: 0, sale_price: 0, quantity: 0, min_quantity: 2, car_models: '', payment_type: 'naqd', supplier_name: '', barcode: '' };
+// (3/c) O'lchov birliklari — "dona" standart. Ikki xil rejim (dual_mode)
+// yoqilganda mahsulot HAM "butun" holda (whole_label/whole_size/whole_price),
+// HAM shu asosiy birlik bo'yicha (unit/sale_price) sotilishi mumkin —
+// ikkalasi ham bitta umumiy qoldiqdan (asosiy birlikda) kamayadi.
+const UNIT_OPTIONS = [
+  { value: 'dona', label: 'Dona' },
+  { value: 'kg', label: 'Kilogramm (kg)' },
+  { value: 'gramm', label: 'Gramm' },
+  { value: 'metr', label: 'Metr' },
+  { value: 'litr', label: 'Litr' },
+];
+
+const empty = {
+  name: '', brand: '', category: '', part_type: 'original', costPrice: 0, purchase_price: 0, sale_price: 0,
+  quantity: 0, min_quantity: 2, car_models: '', payment_type: 'naqd', supplier_name: '', barcode: '',
+  unit: 'dona', dual_mode: false, whole_label: '', whole_size: '', whole_price: '',
+};
 
 function normalizeProduct(p = {}) {
   const costPrice = Number(p.costPrice ?? p.purchase_price ?? 0) || 0;
-  return { ...p, costPrice, purchase_price: costPrice };
+  return {
+    ...p,
+    costPrice,
+    purchase_price: costPrice,
+    unit: p.unit || 'dona',
+    dual_mode: !!p.dual_mode,
+    whole_label: p.whole_label || '',
+    whole_size: p.whole_size || '',
+    whole_price: p.whole_price || '',
+  };
 }
 
 function money(n) {
@@ -96,6 +121,16 @@ export default function Products() {
 
   async function handleSave(e) {
     e.preventDefault();
+
+    // (3/c) Ikki xil rejim yoqilgan bo'lsa, "1 butunga necha X" va "1 butun
+    // narxi" majburiy — aks holda ombordan qancha ayirishni bilib bo'lmaydi
+    // (server ham xuddi shuni tekshiradi, lekin bu yerda oldindan aniq
+    // ogohlantirish berish qulayroq).
+    if (form.dual_mode && (Number(form.whole_size || 0) <= 0 || Number(form.whole_price || 0) <= 0)) {
+      alert(`"1 butunga necha ${form.unit}" va "1 butun narxi" maydonlarini to'g'ri kiriting`);
+      return;
+    }
+
     const payload = {
       ...form,
       costPrice: Number(form.costPrice ?? form.purchase_price ?? 0) || 0,
@@ -103,6 +138,11 @@ export default function Products() {
       sale_price: Number(form.sale_price || 0),
       quantity: Number(form.quantity || 0),
       min_quantity: Number(form.min_quantity ?? 2),
+      unit: form.unit || 'dona',
+      dual_mode: !!form.dual_mode,
+      whole_label: form.dual_mode ? (form.whole_label || '').trim() || 'butun' : '',
+      whole_size: form.dual_mode ? Number(form.whole_size || 0) : 0,
+      whole_price: form.dual_mode ? Number(form.whole_price || 0) : 0,
     };
 
     // (23) Tan narx va sotish narxi tasodifan almashtirilib qo'yilishining
@@ -301,7 +341,7 @@ export default function Products() {
             <div style={{ fontSize: 18, fontWeight: 700 }}>{stats.typeCount}</div>
           </div>
           <div>
-            <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Jami dona</div>
+            <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>Jami miqdor</div>
             <div style={{ fontSize: 18, fontWeight: 700 }}>{stats.totalUnits}</div>
           </div>
           <div>
@@ -346,9 +386,16 @@ export default function Products() {
                   </span>
                 </td>
                 <td>{showCostPrices ? money(p.costPrice ?? p.purchase_price ?? 0) : '••••••'}</td>
-                <td>{money(p.sale_price)}</td>
                 <td>
-                  <span className={`badge ${p.quantity <= p.min_quantity ? 'red' : 'green'}`}>{p.quantity} dona</span>
+                  {p.dual_mode ? (
+                    <>
+                      {money(p.whole_price)} / {p.whole_label || 'butun'}
+                      <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{money(p.sale_price)} / {p.unit}</div>
+                    </>
+                  ) : money(p.sale_price)}
+                </td>
+                <td>
+                  <span className={`badge ${p.quantity <= p.min_quantity ? 'red' : 'green'}`}>{p.quantity} {p.unit || 'dona'}</span>
                 </td>
                 {canEdit && (
                   <td style={{ display: 'flex', gap: 6 }}>
@@ -403,6 +450,47 @@ export default function Products() {
                 <option value="ishlatilgan">Ishlatilgan</option>
               </select>
             </div>
+            {/* (3/c) O'lchov birligi — qoldiq va sotuv shu birlikda hisoblanadi
+                (dona, kg, gramm, metr, litr). */}
+            <div className="form-row">
+              <label>O'lchov birligi</label>
+              <select value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })}>
+                {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+              </select>
+            </div>
+            <div className="form-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                type="checkbox"
+                id="dual_mode_checkbox"
+                style={{ width: 'auto' }}
+                checked={!!form.dual_mode}
+                onChange={(e) => setForm({ ...form, dual_mode: e.target.checked })}
+              />
+              <label htmlFor="dual_mode_checkbox" style={{ marginBottom: 0 }}>
+                Ikki xil rejimda sotish (masalan: butun shisha HAM, litrlab HAM)
+              </label>
+            </div>
+            {form.dual_mode && (
+              <div className="card" style={{ background: 'var(--panel-light)', padding: 12, marginBottom: 14 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>
+                  Ikkala rejim ham BITTA umumiy qoldiqdan ({form.unit}) kamayadi.
+                </div>
+                <div className="form-row">
+                  <label>"Butun"ning nomi (masalan: shisha, quti, rulon)</label>
+                  <input value={form.whole_label} onChange={(e) => setForm({ ...form, whole_label: e.target.value })} placeholder="masalan: shisha" />
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className="form-row">
+                    <label>1 {form.whole_label || 'butun'}ga necha {form.unit} *</label>
+                    <input required type="number" step="0.01" value={form.whole_size} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, whole_size: e.target.value })} />
+                  </div>
+                  <div className="form-row">
+                    <label>1 {form.whole_label || 'butun'} narxi *</label>
+                    <input required type="number" value={form.whole_price} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, whole_price: e.target.value })} />
+                  </div>
+                </div>
+              </div>
+            )}
             {/* (6) Mahsulotda ishlab chiqaruvchidan kelgan tayyor shtrix-kod
                 bo'lsa shuni kiritish mumkin; bo'sh qoldirilsa Posway o'zi
                 noyob shtrix-kod yaratib beradi. */}
@@ -420,7 +508,7 @@ export default function Products() {
                 <input type="number" value={form.costPrice ?? form.purchase_price ?? 0} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, costPrice: +e.target.value, purchase_price: +e.target.value })} />
               </div>
               <div className="form-row">
-                <label>Sotish narxi *</label>
+                <label>{form.dual_mode ? `1 ${form.unit} narxi (o'lchovga bo'lib sotilganda) *` : 'Sotish narxi *'}</label>
                 <input required type="number" value={form.sale_price} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, sale_price: +e.target.value })} />
               </div>
             </div>
@@ -464,14 +552,14 @@ export default function Products() {
         <div className="modal-overlay" onClick={() => setKirimProduct(null)}>
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleKirimSave}>
             <h3 style={{ marginTop: 0 }}>Kirim: {kirimProduct.name}</h3>
-            <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>Hozirgi qoldiq: {kirimProduct.quantity} dona</div>
+            <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>Hozirgi qoldiq: {kirimProduct.quantity} {kirimProduct.unit || 'dona'}</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div className="form-row">
-                <label>Qo'shiladigan miqdor *</label>
-                <input required type="number" value={kirimForm.quantity} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, quantity: e.target.value })} />
+                <label>Qo'shiladigan miqdor ({kirimProduct.unit || 'dona'}) *</label>
+                <input required type="number" step="0.01" value={kirimForm.quantity} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, quantity: e.target.value })} />
               </div>
               <div className="form-row">
-                <label>Dona tan narxi *</label>
+                <label>1 {kirimProduct.unit || 'dona'} tan narxi *</label>
                 <input required type="number" value={kirimForm.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, unit_cost: e.target.value })} />
               </div>
             </div>
@@ -547,7 +635,7 @@ export default function Products() {
                         <td>{new Date(m.created_at).toLocaleString('uz-UZ')}</td>
                         <td><span className={`badge ${meta.color}`}>{meta.label}</span></td>
                         <td style={{ color: m.quantity_delta < 0 ? 'var(--red)' : m.quantity_delta > 0 ? 'var(--green)' : undefined }}>
-                          {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta} dona
+                          {m.quantity_delta > 0 ? `+${m.quantity_delta}` : m.quantity_delta} {historyProduct.unit || 'dona'}
                           {(m.unit_cost || m.unit_price) ? (
                             <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>
                               {m.unit_cost ? `tan narx: ${money(m.unit_cost)}` : ''}
