@@ -200,6 +200,7 @@ td { font-weight: 600; }
 .badge.green { background: rgba(34,197,94,0.15); color: var(--green); }
 .badge.red { background: rgba(239,68,68,0.15); color: var(--red); }
 .badge.orange { background: rgba(249,115,22,0.15); color: #c2410c; }
+.badge.blue { background: rgba(37,99,235,0.15); color: var(--blue); }
 
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,0.6);
@@ -284,8 +285,21 @@ td { font-weight: 600; }
 .pos-product-row td { padding: 7px 8px; }
 .pos-product-row td:first-child { font-weight: 700; }
 
+/* (2026-09-20) Mahsulotlar ro'yxati va savat o'rtasidagi sudrab-o'zgartirish
+   chegarasi — faqat kompyuterda (mobilda .pos-grid bitta ustunga aylanadi,
+   sudrash mantiqiy emas). */
+.pos-resize-handle {
+  cursor: col-resize;
+  background: var(--border);
+  border-radius: 4px;
+  align-self: stretch;
+  touch-action: none;
+}
+.pos-resize-handle:hover, .pos-resize-handle:active { background: var(--accent); }
+
 @media (max-width: 900px) {
   .pos-grid { grid-template-columns: 1fr !important; }
+  .pos-resize-handle { display: none; }
   .pos-cart-panel {
     position: fixed; right: 0; top: 0; bottom: 0; width: min(92vw, 420px);
     transform: translateX(100%); transition: transform 0.25s ease;
