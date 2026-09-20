@@ -15,13 +15,35 @@ const links = [
   { to: '/xodimlar', label: '🧑‍💼 Xodimlar', adminOnly: true },
 ];
 
+const SIDEBAR_COLLAPSED_KEY = 'gm0064_sidebar_collapsed';
+
 export default function Layout() {
   const { user, logout } = useAuth();
   const [open, setOpen] = useState(false);
+  // (2026-09-18) Kompyuter/kassa ekranida chap menyuni yig'ib qo'yish
+  // imkoniyati — ayniqsa Sotuv (kassa) sahifasida mahsulot ro'yxati va
+  // savatga to'liq joy berish uchun. Tanlov saqlanib qoladi (localStorage),
+  // shunda har safar sahifa yangilanganda qayta bosish shart bo'lmaydi.
+  // Mobil ekrandagi "☰ Menyu" (off-canvas) tugmasidan mustaqil ishlaydi.
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
   const navigate = useNavigate();
   const sidebarRef = useRef(null);
   const toggleRef = useRef(null);
   const touchStartX = useRef(null);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch {
+      // e'tiborsiz qoldiramiz
+    }
+  }, [collapsed]);
 
   // (15) Mobilda sidebar ochiq bo'lganda tashqariga bosilsa yopilishi.
   // Toggle tugmasi alohida tekshiriladi — aks holda tugma bosilganda
@@ -58,7 +80,7 @@ export default function Layout() {
   }
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${collapsed ? 'sidebar-collapsed' : ''}`}>
       {open && <div className="sidebar-overlay" onClick={() => setOpen(false)} />}
       <div
         className={`sidebar ${open ? 'open' : ''}`}
@@ -66,9 +88,19 @@ export default function Layout() {
         onTouchStart={handleTouchStart}
         onTouchEnd={handleTouchEnd}
       >
-        <div className="sidebar-brand">
-          Posway
-          <span>{user?.full_name}</span>
+        <div className="sidebar-brand" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            Posway
+            <span>{user?.full_name}</span>
+          </div>
+          <button
+            type="button"
+            className="sidebar-collapse-btn"
+            title="Menyuni yig'ish"
+            onClick={() => setCollapsed(true)}
+          >
+            ⟨⟨
+          </button>
         </div>
         {links.map((l) => {
           if (l.adminOnly && user?.role !== 'admin') return null;
@@ -92,6 +124,16 @@ export default function Layout() {
         <div className="mobile-toggle" style={{ marginBottom: 16 }} ref={toggleRef}>
           <button className="btn secondary" onClick={() => setOpen(!open)}>☰ Menyu</button>
         </div>
+        {collapsed && (
+          <button
+            type="button"
+            className="sidebar-expand-btn"
+            title="Menyuni ko'rsatish"
+            onClick={() => setCollapsed(false)}
+          >
+            ☰
+          </button>
+        )}
         <Outlet />
       </div>
     </div>
