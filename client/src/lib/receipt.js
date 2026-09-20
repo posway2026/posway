@@ -300,7 +300,14 @@ export function buildSaleReceiptData(sale, items, { customerName, sellerName } =
   if (customerName) subtitleLines.push(`Mijoz: ${customerName}`);
   if (sellerName) subtitleLines.push(`Sotuvchi: ${sellerName}`);
 
-  const rows = (items || []).map((it) => [it.product_name, String(it.quantity), money(it.total_price ?? it.unit_price * it.quantity)]);
+  // (3/c) `display_quantity`/`display_unit` mavjud bo'lsa ("butun" rejimida
+  // sotilgan — masalan "2 shisha"), o'shani ko'rsatamiz; aks holda oddiy
+  // miqdor+birlik (masalan "3 litr", yoki eski cheklar uchun faqat son).
+  const rows = (items || []).map((it) => {
+    const qty = it.display_quantity ?? it.quantity;
+    const unitLabel = it.display_unit ? ` ${it.display_unit}` : '';
+    return [it.product_name, `${qty}${unitLabel}`, money(it.total_price ?? it.unit_price * it.quantity)];
+  });
   // (37) Kafolat — faqat kafolat kuni belgilangan qatorlarga alohida izoh
   // qo'shiladi (bilingual O'zbek/Rus); qolgan qatorlarga hech narsa
   // qo'shilmaydi (ular kafolatsiz ekani shunchaki ko'rinib turadi).
