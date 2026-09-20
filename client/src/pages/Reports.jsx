@@ -297,7 +297,7 @@ export default function Reports() {
                         <input type="checkbox" checked={!!returnModal.selected[it.id]} onChange={() => toggleItemSelected(it.id)} />
                         <strong>{it.product_name}</strong>
                       </label>
-                      <span style={{ color: 'var(--text-dim)' }}>{it.quantity} dona — {money(it.total_price)}</span>
+                      <span style={{ color: 'var(--text-dim)' }}>{it.display_quantity ?? it.quantity} {it.display_unit || 'dona'} — {money(it.total_price)}</span>
                     </div>
                     {returnModal.selected[it.id] && (
                       <div style={{ display: 'flex', gap: 8 }}>
@@ -399,8 +399,8 @@ export default function Reports() {
                 {viewModal.items.map((it) => (
                   <tr key={it.id}>
                     <td>{it.product_name}</td>
-                    <td>{it.quantity}</td>
-                    <td>{money(it.unit_price)}</td>
+                    <td>{it.display_quantity ?? it.quantity} {it.display_unit || ''}</td>
+                    <td>{money(it.display_unit_price ?? it.unit_price)}</td>
                     <td>{money(it.total_price)}</td>
                   </tr>
                 ))}
