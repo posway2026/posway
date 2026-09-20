@@ -137,6 +137,55 @@ export default function Pos() {
   // tugmalarini yoqib/o'chirish mumkin.
   const [kioskMode, setKioskMode] = useState(true);
 
+  // (2026-09-20) Mahsulotlar ro'yxati va savat panelini o'rtasidagi
+  // chegarani sudrab, ikkalasining kengligini o'zgartirish (faqat
+  // kompyuterda — mobilda .pos-grid CSS orqali bitta ustunga aylanadi).
+  // Tanlangan nisbat localStorage'da saqlanadi, shunda har safar sahifa
+  // ochilganda qayta sozlash shart bo'lmaydi.
+  const POS_SPLIT_KEY = 'gm0064_pos_split_pct';
+  const [splitPct, setSplitPct] = useState(() => {
+    try {
+      const v = parseFloat(localStorage.getItem(POS_SPLIT_KEY));
+      return Number.isFinite(v) && v >= 25 && v <= 75 ? v : 44;
+    } catch {
+      return 44;
+    }
+  });
+  const posGridRef = useRef(null);
+  const draggingSplitRef = useRef(false);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(POS_SPLIT_KEY, String(splitPct));
+    } catch {
+      // e'tiborsiz qoldiramiz
+    }
+  }, [splitPct]);
+
+  function handleSplitPointerDown(e) {
+    draggingSplitRef.current = true;
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ba'zi brauzerlarda setPointerCapture ishlamasligi mumkin — muammo emas
+    }
+  }
+  function handleSplitPointerMove(e) {
+    if (!draggingSplitRef.current || !posGridRef.current) return;
+    const rect = posGridRef.current.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    setSplitPct(Math.min(75, Math.max(25, Math.round(pct))));
+  }
+  function handleSplitPointerUp(e) {
+    draggingSplitRef.current = false;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // e'tiborsiz qoldiramiz
+    }
+  }
+
   const activeIdx = activeIndex < carts.length ? activeIndex : 0;
   const activeCart = carts[activeIdx];
   const cart = activeCart.cart;
@@ -489,12 +538,15 @@ export default function Pos() {
       )}
 
       {/* (2026-09-18) Savat oldin juda tor bo'lib qolayotgan edi (1.3fr/1fr)
-          — endi savatga ko'proq joy beramiz, mahsulot ro'yxati esa o'zi
-          scroll bo'ladigan jadval bo'lgani uchun torroq bo'lsa ham
-          muammo emas. minmax ikkalasi ham haddan tashqari torayib
-          ketmasligi uchun. */}
-      <div className="pos-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(380px, 1.25fr)', gap: 16 }}>
-        <div className="card">
+          — standart nisbat endi savatga ko'proq joy beradi (44%/56%).
+          (2026-09-20) Bu nisbatni endi o'rtadagi chegarani (divider)
+          sudrab o'zgartirish ham mumkin — tanlov localStorage'da saqlanadi. */}
+      <div
+        className="pos-grid"
+        ref={posGridRef}
+        style={{ display: 'grid', gridTemplateColumns: `${splitPct}% 8px 1fr`, gap: 0 }}
+      >
+        <div className="card" style={{ marginRight: 8 }}>
           {/* (6) Shu maydon ham oddiy matn qidiruvi, ham shtrix-kod skaneri
               kirishi sifatida ishlaydi — skaner Enter yuborganda aniq
               moslikni tekshiramiz. */}
@@ -541,6 +593,17 @@ export default function Pos() {
             </table>
           </div>
         </div>
+
+        {/* (2026-09-20) Sudrab kengligini o'zgartirish uchun chegara —
+            faqat kompyuterda ko'rinadi (mobilda index.css orqali
+            yashiriladi, chunki u yerda .pos-grid bitta ustunga aylanadi). */}
+        <div
+          className="pos-resize-handle"
+          onPointerDown={handleSplitPointerDown}
+          onPointerMove={handleSplitPointerMove}
+          onPointerUp={handleSplitPointerUp}
+          title="Sudrab kenglikni o'zgartiring"
+        />
 
         {/* (20) Mobilda savat "drawer" sifatida ochiladi — tashqarisiga
             (shu qoraytirilgan qatlamga) bosilsa yopiladi. Katta ekranda bu
