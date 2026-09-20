@@ -510,6 +510,7 @@ export default function SupplierDebts() {
                         <label>Turi</label>
                         <select value={line.new_product_part_type} onChange={(e) => updateKirimLine(line.key, { new_product_part_type: e.target.value })}>
                           <option value="original">Original</option>
+                          <option value="oem">OEM (xitoy)</option>
                           <option value="ishlatilgan">Ishlatilgan</option>
                         </select>
                       </div>
