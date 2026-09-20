@@ -116,6 +116,15 @@ router.post('/', authRequired, (req, res) => {
 
   for (const it of items) {
     const itemId = nextId(data, 'sale_items');
+    const p = data.products.find((pp) => pp.id == it.product_id);
+    // (3/c) `quantity`/`unit_price` HAR DOIM mahsulotning ASOSIY o'lchov
+    // birligida (masalan litr) — shu orqali ombor, tan narx va qaytarish
+    // hisob-kitoblari (returns.js) o'zgarishsiz, to'g'ri ishlayveradi. Ammo
+    // ikki xil rejimda ("butun" holda, masalan shisha) sotilgan bo'lsa,
+    // kassachi haqiqatda "necha shisha" sotganini ko'rgani ma'qul — shu
+    // uchun frontend ixtiyoriy ravishda display_* maydonlarini yuboradi
+    // (masalan 2 ta "shisha", narxi 15000/shisha) — bular FAQAT chek/tarix
+    // ko'rsatish uchun, hech qanday summaga ta'sir qilmaydi.
     data.sale_items.push({
       id: itemId,
       sale_id: saleId,
@@ -128,8 +137,11 @@ router.post('/', authRequired, (req, res) => {
       // (ixtiyoriy, standart 0 = kafolatsiz). Faqat chekda ko'rsatish uchun —
       // moliyaviy hisob-kitoblarga (foyda, qarz va h.k.) ta'sir qilmaydi.
       warranty_days: Math.max(0, Math.round(Number(it.warranty_days) || 0)),
+      unit: p?.unit || 'dona',
+      display_quantity: it.display_quantity != null ? Number(it.display_quantity) : it.quantity,
+      display_unit: it.display_unit || p?.unit || 'dona',
+      display_unit_price: it.display_unit_price != null ? Number(it.display_unit_price) : it.unit_price,
     });
-    const p = data.products.find((pp) => pp.id == it.product_id);
     p.quantity -= it.quantity;
     p.sold_count = Number(p.sold_count || 0) + Number(it.quantity || 0);
     p.sales_count = Number(p.sales_count || 0) + Number(it.quantity || 0);
