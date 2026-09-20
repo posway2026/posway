@@ -24,7 +24,10 @@ body {
   font-family: 'Segoe UI', system-ui, sans-serif;
   background: var(--bg);
   color: var(--text);
-  font-weight: 500;
+  /* (2026-09-18) Ilova 7 yoshdan 70 yoshgacha hamma uchun tushunarli/
+     o'qish oson bo'lishi kerak — shuning uchun matnlar butun ilova
+     bo'ylab qalinroq (500 emas, 600) qilib qo'yildi. */
+  font-weight: 600;
 }
 
 button {
@@ -41,6 +44,7 @@ input, select, textarea {
   padding: 10px 12px;
   width: 100%;
   font-size: 15px;
+  font-weight: 600;
 }
 
 input:focus, select:focus, textarea:focus {
@@ -73,6 +77,33 @@ input:focus, select:focus, textarea:focus {
 }
 
 .sidebar-brand span { color: var(--text); font-weight: 400; font-size: 12px; display: block; }
+
+/* (2026-09-18) Kompyuterda chap menyuni yig'ib/yoyib qo'yish tugmalari
+   (mobil off-canvas menyudan mustaqil — u alohida @media qoidasi orqali
+   boshqariladi, pastda). */
+.sidebar-collapse-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-dim); cursor: pointer; font-size: 13px; padding: 4px 8px;
+  flex-shrink: 0;
+}
+.sidebar-collapse-btn:hover { background: var(--panel-light); color: var(--text); }
+.sidebar-expand-btn { display: none; }
+/* Faqat kompyuter ekranida ishlaydi — mobilda sidebar allaqachon
+   off-canvas (☰ Menyu tugmasi bilan boshqariladi), shu ikkisi
+   bir-biriga xalaqit bermasligi uchun min-width bilan cheklaymiz. */
+@media (min-width: 769px) {
+  .app-layout.sidebar-collapsed .sidebar { display: none; }
+  .app-layout.sidebar-collapsed .sidebar-expand-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 38px; height: 38px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); cursor: pointer; font-size: 16px;
+    margin-bottom: 16px;
+  }
+  .sidebar-expand-btn:hover { background: var(--panel-light); }
+}
+@media (max-width: 768px) {
+  .sidebar-collapse-btn { display: none; }
+}
 
 .nav-link {
   display: flex;
@@ -142,7 +173,8 @@ th, td {
   font-size: 14px;
 }
 
-th { color: var(--text-dim); font-weight: 600; font-size: 13px; }
+th { color: var(--text-dim); font-weight: 700; font-size: 13px; }
+td { font-weight: 600; }
 
 .btn {
   background: var(--accent);
@@ -163,7 +195,7 @@ th { color: var(--text-dim); font-weight: 600; font-size: 13px; }
   padding: 3px 10px;
   border-radius: 20px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 .badge.green { background: rgba(34,197,94,0.15); color: var(--green); }
 .badge.red { background: rgba(239,68,68,0.15); color: var(--red); }
@@ -182,7 +214,7 @@ th { color: var(--text-dim); font-weight: 600; font-size: 13px; }
 }
 
 .form-row { margin-bottom: 14px; }
-.form-row label { display: block; margin-bottom: 6px; font-size: 13px; color: var(--text-dim); }
+.form-row label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 700; color: var(--text-dim); }
 
 .login-wrap {
   min-height: 100vh; display: flex; align-items: center; justify-content: center;
