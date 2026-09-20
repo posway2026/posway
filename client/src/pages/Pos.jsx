@@ -13,6 +13,31 @@ function daysFromToday(days) {
   return new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
 }
 
+// (3/c) Kasr miqdorda sotilishi mumkin bo'lgan birliklar (masalan 1.5 kg) —
+// "dona" va "butun" (dual_mode'dagi whole rejimi) har doim butun son.
+const DECIMAL_UNITS = ['kg', 'gramm', 'metr', 'litr'];
+function isDecimalLine(it) {
+  return it.mode !== 'whole' && DECIMAL_UNITS.includes(it.unit);
+}
+
+// (3/c) Eski saqlangan savatlarda (localStorage) yangi maydonlar
+// (line_id/mode/unit) umuman bo'lmasligi mumkin — shuning uchun har bir
+// qatorni yuklashda to'ldirib olamiz, aks holda React key va +/- tugmalari
+// ishlamay qoladi.
+function normalizeCartItem(it) {
+  return {
+    ...it,
+    line_id: it.line_id || Math.random().toString(36).slice(2),
+    mode: it.mode || null,
+    unit: it.unit || 'dona',
+    whole_size: it.whole_size || null,
+  };
+}
+function normalizeCarts(state) {
+  if (!state || !Array.isArray(state.carts)) return state;
+  return { ...state, carts: state.carts.map((c) => ({ ...c, cart: (c.cart || []).map(normalizeCartItem) })) };
+}
+
 const CARTS_STORAGE_KEY = 'gm0064_pos_carts_v2';
 const LEGACY_CART_STORAGE_KEY = 'gm0064_pos_cart_v1';
 // (36) Bir vaqtda ochiq bo'lishi mumkin bo'lgan savatlar soni chegarasi.
@@ -85,7 +110,7 @@ function saveCarts(state) {
 }
 
 export default function Pos() {
-  const saved = useMemo(() => loadSavedCarts(), []);
+  const saved = useMemo(() => normalizeCarts(loadSavedCarts()), []);
 
   const [search, setSearch] = useState('');
   const [products, setProducts] = useState([]);
@@ -169,24 +194,49 @@ export default function Pos() {
     });
   }
 
-  function addToCart(p) {
-    updateActiveCart((c) => ({
-      cart: c.cart.find((it) => it.product_id === p.id)
-        ? c.cart.map((it) => (it.product_id === p.id ? { ...it, quantity: it.quantity + 1 } : it))
-        : [
-            ...c.cart,
-            {
-              product_id: p.id,
-              product_name: p.name,
-              unit_price: p.sale_price,
-              original_price: p.sale_price,
-              quantity: 1,
-              max: p.quantity,
-              // (37) Kafolat — ixtiyoriy, standart bo'sh (0 kun = kafolatsiz).
-              warranty_days: '',
-            },
-          ],
-    }));
+  // (3/c) `mode` faqat dual_mode mahsulotlar uchun mazmunli: 'whole' —
+  // "butun" holda (masalan 1 shisha, whole_price bo'yicha, ombordan
+  // whole_size dona asosiy birlik ayiriladi); aks holda (mode berilmasa,
+  // yoki mahsulot dual_mode bo'lmasa) — asosiy birlik bo'yicha (sale_price,
+  // ombordan to'g'ridan-to'g'ri kiritilgan miqdor ayiriladi). Bitta mahsulot
+  // ikkala rejimda ham savatga qo'shilgan bo'lishi mumkin (masalan 1 shisha
+  // + 0.5 litr alohida-alohida) — shuning uchun qatorlar product_id emas,
+  // alohida line_id bilan ajratiladi.
+  function addToCart(p, mode) {
+    const isWhole = p.dual_mode && mode === 'whole';
+    const normalizedMode = p.dual_mode ? (isWhole ? 'whole' : 'measure') : null;
+    const unitPrice = isWhole ? Number(p.whole_price || 0) : Number(p.sale_price || 0);
+    const unitLabel = isWhole ? (p.whole_label || 'butun') : (p.unit || 'dona');
+    const maxQty = isWhole ? Math.floor(Number(p.quantity || 0) / Number(p.whole_size || 1)) : Number(p.quantity || 0);
+    updateActiveCart((c) => {
+      const existing = c.cart.find((it) => it.product_id === p.id && (it.mode || null) === normalizedMode);
+      if (existing) {
+        return {
+          cart: c.cart.map((it) =>
+            it.line_id === existing.line_id ? { ...it, quantity: it.quantity + (isDecimalLine(it) ? 0.5 : 1) } : it
+          ),
+        };
+      }
+      return {
+        cart: [
+          ...c.cart,
+          {
+            line_id: Math.random().toString(36).slice(2),
+            product_id: p.id,
+            product_name: p.name,
+            unit_price: unitPrice,
+            original_price: unitPrice,
+            quantity: 1,
+            max: maxQty,
+            // (37) Kafolat — ixtiyoriy, standart bo'sh (0 kun = kafolatsiz).
+            warranty_days: '',
+            mode: normalizedMode,
+            unit: unitLabel,
+            whole_size: isWhole ? Number(p.whole_size || 1) : null,
+          },
+        ],
+      };
+    });
   }
 
   // (6) Shtrix-kod skaneri odatda klaviaturaga juda tez raqam terib, oxirida
@@ -214,22 +264,41 @@ export default function Pos() {
     }
   }
 
-  function updateQty(id, qty) {
-    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.product_id === id ? { ...it, quantity: Math.max(1, qty) } : it)) }));
+  // (3/c) Endi savat qatorlari `line_id` orqali aniqlanadi (product_id
+  // emas) — chunki bitta mahsulot ikki xil rejimda (butun + o'lchov) bir
+  // vaqtda savatda bo'lishi mumkin. Kasr birliklar (kg/gramm/metr/litr)
+  // uchun minimal miqdor 0.01, aks holda (dona yoki "butun" rejimi) — 1.
+  function updateQty(lineId, qty) {
+    updateActiveCart((c) => ({
+      cart: c.cart.map((it) => {
+        if (it.line_id !== lineId) return it;
+        const decimal = isDecimalLine(it);
+        const minQty = decimal ? 0.01 : 1;
+        const val = Number(qty);
+        return { ...it, quantity: Number.isFinite(val) ? Math.max(minQty, val) : minQty };
+      }),
+    }));
   }
 
   // (20) Kiosk rejimidagi katta +/- tugmalari uchun.
-  function stepQty(id, delta) {
+  function stepQty(lineId, delta) {
     updateActiveCart((c) => ({
-      cart: c.cart.map((it) => (it.product_id === id ? { ...it, quantity: Math.max(1, it.quantity + delta) } : it)),
+      cart: c.cart.map((it) => {
+        if (it.line_id !== lineId) return it;
+        const decimal = isDecimalLine(it);
+        const stepSize = decimal ? 0.5 : 1;
+        const minQty = decimal ? 0.01 : 1;
+        const next = Math.round((it.quantity + delta * stepSize) * 100) / 100;
+        return { ...it, quantity: Math.max(minQty, next) };
+      }),
     }));
   }
 
   // (20) Kiosk rejimida qatorlarni yuqori/pastga surish (kassachi uchun
   // qulay tartibda joylashtirish imkoni).
-  function moveItem(id, dir) {
+  function moveItem(lineId, dir) {
     updateActiveCart((c) => {
-      const idx = c.cart.findIndex((it) => it.product_id === id);
+      const idx = c.cart.findIndex((it) => it.line_id === lineId);
       const swapWith = idx + dir;
       if (idx === -1 || swapWith < 0 || swapWith >= c.cart.length) return {};
       const next = [...c.cart];
@@ -240,24 +309,24 @@ export default function Pos() {
 
   // (2) Tovar darajasidagi chegirma — savatdagi bitta qatorning narxini
   // to'g'ridan-to'g'ri tahrirlash imkoniyati.
-  function updateItemPrice(id, price) {
+  function updateItemPrice(lineId, price) {
     const clean = Math.max(0, Number(price) || 0);
-    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.product_id === id ? { ...it, unit_price: clean } : it)) }));
+    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.line_id === lineId ? { ...it, unit_price: clean } : it)) }));
   }
 
-  function resetItemPrice(id) {
-    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.product_id === id ? { ...it, unit_price: it.original_price } : it)) }));
+  function resetItemPrice(lineId) {
+    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.line_id === lineId ? { ...it, unit_price: it.original_price } : it)) }));
   }
 
   // (37) Kafolat kun soni — bo'sh yoki 0 = kafolatsiz (chekda hech narsa
   // ko'rsatilmaydi, faqat kafolat belgilangan qatorlarga izoh qo'shiladi).
-  function updateItemWarranty(id, days) {
+  function updateItemWarranty(lineId, days) {
     const clean = Math.max(0, Math.round(Number(days) || 0));
-    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.product_id === id ? { ...it, warranty_days: clean || '' } : it)) }));
+    updateActiveCart((c) => ({ cart: c.cart.map((it) => (it.line_id === lineId ? { ...it, warranty_days: clean || '' } : it)) }));
   }
 
-  function removeItem(id) {
-    updateActiveCart((c) => ({ cart: c.cart.filter((it) => it.product_id !== id) }));
+  function removeItem(lineId) {
+    updateActiveCart((c) => ({ cart: c.cart.filter((it) => it.line_id !== lineId) }));
   }
 
   const subtotal = cart.reduce((s, it) => s + it.quantity * it.unit_price, 0);
@@ -332,13 +401,29 @@ export default function Pos() {
       }
       const result = await api.createSale({
         customer_id: activeCart.customerId || null,
-        items: cart.map(({ product_id, product_name, quantity, unit_price, warranty_days }) => ({
-          product_id,
-          product_name,
-          quantity,
-          unit_price,
-          warranty_days: Number(warranty_days) || 0,
-        })),
+        // (3/c) `quantity`/`unit_price` serverga HAR DOIM asosiy o'lchov
+        // birligida (masalan litr) yuboriladi — ombor/tan narx hisob-
+        // kitoblari shu orqali ishlaydi. "Butun" rejimida (masalan 2
+        // shisha) savatdagi quantity/unit_price "butun" bo'yicha bo'lgani
+        // uchun bu yerda asosiy birlikka aylantiramiz (2 shisha x 1.5 litr
+        // = 3 litr ombordan ayiriladi). display_* maydonlari esa faqat
+        // chek/tarixda "2 shisha" deb to'g'ri ko'rsatish uchun — moliyaviy
+        // hisobga ta'sir qilmaydi.
+        items: cart.map(({ product_id, product_name, quantity, unit_price, warranty_days, mode, unit, whole_size }) => {
+          const isWhole = mode === 'whole';
+          const stockQty = isWhole ? quantity * (whole_size || 1) : quantity;
+          const baseUnitPrice = isWhole && whole_size ? unit_price / whole_size : unit_price;
+          return {
+            product_id,
+            product_name,
+            quantity: stockQty,
+            unit_price: baseUnitPrice,
+            warranty_days: Number(warranty_days) || 0,
+            display_quantity: quantity,
+            display_unit: unit || 'dona',
+            display_unit_price: unit_price,
+          };
+        }),
         paid_naqd: paidNaqd,
         paid_karta: paidKarta,
         discount_type: activeCart.discountType === 'none' ? null : activeCart.discountType,
@@ -364,6 +449,8 @@ export default function Pos() {
           unit_price: it.unit_price,
           total_price: it.quantity * it.unit_price,
           warranty_days: Number(it.warranty_days) || 0,
+          display_quantity: it.quantity,
+          display_unit: it.unit || 'dona',
         })),
         customerName: activeCart.customerId ? customers.find((c) => c.id == activeCart.customerId)?.full_name || null : null,
       });
@@ -401,7 +488,12 @@ export default function Pos() {
         </div>
       )}
 
-      <div className="pos-grid" style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 16 }}>
+      {/* (2026-09-18) Savat oldin juda tor bo'lib qolayotgan edi (1.3fr/1fr)
+          — endi savatga ko'proq joy beramiz, mahsulot ro'yxati esa o'zi
+          scroll bo'ladigan jadval bo'lgani uchun torroq bo'lsa ham
+          muammo emas. minmax ikkalasi ham haddan tashqari torayib
+          ketmasligi uchun. */}
+      <div className="pos-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(320px, 1fr) minmax(380px, 1.25fr)', gap: 16 }}>
         <div className="card">
           {/* (6) Shu maydon ham oddiy matn qidiruvi, ham shtrix-kod skaneri
               kirishi sifatida ishlaydi — skaner Enter yuborganda aniq
@@ -421,9 +513,28 @@ export default function Pos() {
                 {products.map((p) => (
                   <tr key={p.id}>
                     <td>{p.name}</td>
-                    <td>{money(p.sale_price)}</td>
-                    <td>{p.quantity}</td>
-                    <td><button className="btn secondary" disabled={p.quantity <= 0} onClick={() => addToCart(p)}>+ Qo'shish</button></td>
+                    <td>
+                      {p.dual_mode ? (
+                        <>
+                          {money(p.whole_price)}/{p.whole_label || 'butun'}
+                          <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{money(p.sale_price)}/{p.unit}</div>
+                        </>
+                      ) : money(p.sale_price)}
+                    </td>
+                    <td>{p.quantity} {p.unit && p.unit !== 'dona' ? p.unit : ''}</td>
+                    <td>
+                      {/* (3/c) Ikki xil rejimda sotiladigan mahsulot uchun —
+                          "butun" (masalan shisha) yoki o'lchov (masalan
+                          litr) bo'yicha qo'shish, alohida tugmalar bilan. */}
+                      {p.dual_mode ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          <button className="btn secondary" disabled={p.quantity < p.whole_size} onClick={() => addToCart(p, 'whole')}>+ {p.whole_label || 'Butun'}</button>
+                          <button className="btn secondary" disabled={p.quantity <= 0} onClick={() => addToCart(p, 'measure')}>+ {p.unit}</button>
+                        </div>
+                      ) : (
+                        <button className="btn secondary" disabled={p.quantity <= 0} onClick={() => addToCart(p)}>+ Qo'shish</button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -481,42 +592,50 @@ export default function Pos() {
           {cart.length === 0 && <div style={{ color: 'var(--text-dim)' }}>Savat bo'sh</div>}
           {cart.map((it, idx) => {
             const isDiscounted = it.unit_price !== it.original_price;
-            const isEditingPrice = editingField?.id === it.product_id && editingField?.field === 'price';
-            const isEditingWarranty = editingField?.id === it.product_id && editingField?.field === 'warranty';
+            const isEditingPrice = editingField?.id === it.line_id && editingField?.field === 'price';
+            const isEditingWarranty = editingField?.id === it.line_id && editingField?.field === 'warranty';
             const hasWarranty = Number(it.warranty_days) > 0;
+            const decimal = isDecimalLine(it);
             return (
-              <div key={it.product_id} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px dashed var(--border)' }}>
+              <div key={it.line_id} style={{ marginBottom: 10, paddingBottom: 10, borderBottom: '1px dashed var(--border)' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <div style={{ flex: '1 1 140px', fontSize: 14, fontWeight: 700, minWidth: 100 }}>
                     {it.product_name}
+                    {/* (3/c) Bitta mahsulot ikki xil rejimda savatda bo'lishi
+                        mumkin bo'lgani uchun, qaysi birlik/rejimda
+                        qo'shilganini har doim ko'rsatamiz. */}
+                    {(it.mode || (it.unit && it.unit !== 'dona')) && <span style={{ fontWeight: 500, color: 'var(--text-dim)' }}> ({it.unit})</span>}
                     {hasWarranty && !isEditingWarranty && (
                       <div style={{ fontSize: 11, color: 'var(--accent)', fontWeight: 500 }}>🛡️ {it.warranty_days} kun</div>
                     )}
                   </div>
 
                   {/* (20) Kiosk rejimida katta +/- tugmalari, aks holda
-                      oddiy raqam maydoni. */}
+                      oddiy raqam maydoni. (3/c) Kasr birliklar (kg/gramm/
+                      metr/litr) uchun 0.5 qadam bilan, aks holda 1 dona. */}
                   {kioskMode ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <button type="button" className="btn secondary" style={{ padding: '4px 10px', fontSize: 16, fontWeight: 700 }} onClick={() => stepQty(it.product_id, -1)}>−</button>
+                      <button type="button" className="btn secondary" style={{ padding: '4px 10px', fontSize: 16, fontWeight: 700 }} onClick={() => stepQty(it.line_id, -1)}>−</button>
                       <input
                         type="number"
+                        step={decimal ? '0.01' : '1'}
                         style={{ width: 46, textAlign: 'center', padding: '6px 4px' }}
                         value={it.quantity}
                         max={it.max}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => updateQty(it.product_id, +e.target.value)}
+                        onChange={(e) => updateQty(it.line_id, +e.target.value)}
                       />
-                      <button type="button" className="btn secondary" style={{ padding: '4px 10px', fontSize: 16, fontWeight: 700 }} onClick={() => stepQty(it.product_id, 1)}>+</button>
+                      <button type="button" className="btn secondary" style={{ padding: '4px 10px', fontSize: 16, fontWeight: 700 }} onClick={() => stepQty(it.line_id, 1)}>+</button>
                     </div>
                   ) : (
                     <input
                       type="number"
+                      step={decimal ? '0.01' : '1'}
                       style={{ width: 60 }}
                       value={it.quantity}
                       max={it.max}
                       onFocus={(e) => e.target.select()}
-                      onChange={(e) => updateQty(it.product_id, +e.target.value)}
+                      onChange={(e) => updateQty(it.line_id, +e.target.value)}
                     />
                   )}
 
@@ -527,7 +646,7 @@ export default function Pos() {
                       style={{ width: 90 }}
                       defaultValue={it.unit_price}
                       onFocus={(e) => e.target.select()}
-                      onBlur={(e) => { updateItemPrice(it.product_id, e.target.value); setEditingField(null); }}
+                      onBlur={(e) => { updateItemPrice(it.line_id, e.target.value); setEditingField(null); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                     />
                   ) : isEditingWarranty ? (
@@ -538,7 +657,7 @@ export default function Pos() {
                       placeholder="Kafolat, kun"
                       defaultValue={it.warranty_days || ''}
                       onFocus={(e) => e.target.select()}
-                      onBlur={(e) => { updateItemWarranty(it.product_id, e.target.value); setEditingField(null); }}
+                      onBlur={(e) => { updateItemWarranty(it.line_id, e.target.value); setEditingField(null); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                     />
                   ) : (
@@ -559,7 +678,7 @@ export default function Pos() {
                     className="btn secondary"
                     style={{ padding: '6px 8px', fontSize: 12 }}
                     title="Narxni o'zgartirish (chegirma)"
-                    onClick={() => setEditingField(isEditingPrice ? null : { id: it.product_id, field: 'price' })}
+                    onClick={() => setEditingField(isEditingPrice ? null : { id: it.line_id, field: 'price' })}
                   >
                     ✏️
                   </button>
@@ -568,7 +687,7 @@ export default function Pos() {
                     className="btn secondary"
                     style={{ padding: '6px 8px', fontSize: 12 }}
                     title="Kafolat kunini belgilash"
-                    onClick={() => setEditingField(isEditingWarranty ? null : { id: it.product_id, field: 'warranty' })}
+                    onClick={() => setEditingField(isEditingWarranty ? null : { id: it.line_id, field: 'warranty' })}
                   >
                     🛡️
                   </button>
@@ -576,16 +695,16 @@ export default function Pos() {
                   {/* (20) Kiosk rejimida qatorni yuqoriga/pastga surish. */}
                   {kioskMode && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                      <button type="button" className="btn secondary" style={{ padding: '1px 6px', fontSize: 10, lineHeight: 1.4 }} disabled={idx === 0} onClick={() => moveItem(it.product_id, -1)}>▲</button>
-                      <button type="button" className="btn secondary" style={{ padding: '1px 6px', fontSize: 10, lineHeight: 1.4 }} disabled={idx === cart.length - 1} onClick={() => moveItem(it.product_id, 1)}>▼</button>
+                      <button type="button" className="btn secondary" style={{ padding: '1px 6px', fontSize: 10, lineHeight: 1.4 }} disabled={idx === 0} onClick={() => moveItem(it.line_id, -1)}>▲</button>
+                      <button type="button" className="btn secondary" style={{ padding: '1px 6px', fontSize: 10, lineHeight: 1.4 }} disabled={idx === cart.length - 1} onClick={() => moveItem(it.line_id, 1)}>▼</button>
                     </div>
                   )}
 
-                  <button className="btn danger" style={{ padding: '6px 10px' }} onClick={() => removeItem(it.product_id)}>✕</button>
+                  <button className="btn danger" style={{ padding: '6px 10px' }} onClick={() => removeItem(it.line_id)}>✕</button>
                 </div>
                 {isDiscounted && !isEditingPrice && (
                   <div style={{ textAlign: 'right', marginTop: 2 }}>
-                    <button type="button" className="btn secondary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => resetItemPrice(it.product_id)}>
+                    <button type="button" className="btn secondary" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => resetItemPrice(it.line_id)}>
                       Asl narxga qaytarish
                     </button>
                   </div>
