@@ -39,6 +39,17 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
+// (3/c-fix) Mahsulot turi — Original/Ishlatilgan ustiga OEM (xitoy) ham
+// qo'shildi (foydalanuvchi so'rovi bo'yicha, 2026-09-20).
+const PART_TYPE_LABELS = {
+  original: { label: 'Original', color: 'green' },
+  oem: { label: 'OEM (xitoy)', color: 'blue' },
+  ishlatilgan: { label: 'Ishlatilgan', color: 'orange' },
+};
+function partTypeMeta(type) {
+  return PART_TYPE_LABELS[type] || { label: type || '-', color: '' };
+}
+
 // (42) Harakat turlari — mahsulot tarixida o'qish oson bo'lishi uchun.
 const MOVEMENT_LABELS = {
   kirim: { label: '📥 Kirim', color: 'green' },
@@ -381,8 +392,8 @@ export default function Products() {
                 </td>
                 <td>{p.brand}</td>
                 <td>
-                  <span className={`badge ${p.part_type === 'original' ? 'green' : 'orange'}`}>
-                    {p.part_type === 'original' ? 'Original' : 'Ishlatilgan'}
+                  <span className={`badge ${partTypeMeta(p.part_type).color}`}>
+                    {partTypeMeta(p.part_type).label}
                   </span>
                 </td>
                 <td>{showCostPrices ? money(p.costPrice ?? p.purchase_price ?? 0) : '••••••'}</td>
@@ -447,6 +458,7 @@ export default function Products() {
               <label>Turi</label>
               <select value={form.part_type} onChange={(e) => setForm({ ...form, part_type: e.target.value })}>
                 <option value="original">Original</option>
+                <option value="oem">OEM (xitoy)</option>
                 <option value="ishlatilgan">Ishlatilgan</option>
               </select>
             </div>
