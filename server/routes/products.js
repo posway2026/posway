@@ -5,17 +5,56 @@ import { logStockMovement } from '../lib/stockMovements.js';
 
 const router = Router();
 
+// (3/c) Ruxsat etilgan o'lchov birliklari — "dona" standart, qolganlari
+// kasr (0.5, 1.25 va h.k.) miqdorda sotilishi mumkin.
+const VALID_UNITS = ['dona', 'kg', 'gramm', 'metr', 'litr'];
+
 function normalizeProduct(product = {}) {
   const costPrice = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
   return {
     ...product,
     costPrice,
     purchase_price: costPrice,
+    // (3/c) Eski mahsulotlarda bu maydonlar umuman bo'lmasligi mumkin —
+    // shuning uchun har doim standart qiymat bilan qaytaramiz, frontend
+    // formasi va Sotuv sahifasi hech qachon "undefined" bilan ishlamasin.
+    unit: VALID_UNITS.includes(product.unit) ? product.unit : 'dona',
+    dual_mode: !!product.dual_mode,
+    whole_size: Number(product.whole_size || 0) || 0,
+    whole_price: Number(product.whole_price || 0) || 0,
+    whole_label: product.whole_label || '',
   };
 }
 
 function parseNumber(value) {
   return Number(value ?? 0) || 0;
+}
+
+// (3/c) Bitta mahsulot ikki xil rejimda sotilishi mumkin: "butun" holda
+// (masalan bitta shisha, belgilangan qadoq-narxi bilan) yoki o'lchovga
+// qarab bo'lib (masalan litrlab). Ikkalasi ham BITTA umumiy ombor
+// qoldig'idan (asosiy o'lchov birligida, masalan litr) kamayadi. Shu
+// sababli bu rejim yoqilganda whole_size (1 butunga necha baza-birlik
+// to'g'ri kelishi) va whole_price (1 butun narxi) MAJBURIY — aks holda
+// ombordan qancha ayirishni hisoblab bo'lmaydi.
+function validateUnitFields(body) {
+  const unit = VALID_UNITS.includes(body.unit) ? body.unit : 'dona';
+  const dual_mode = !!body.dual_mode;
+  if (dual_mode) {
+    const whole_size = parseNumber(body.whole_size);
+    const whole_price = parseNumber(body.whole_price);
+    if (whole_size <= 0 || whole_price <= 0) {
+      return { error: "Ikki xil rejim uchun \"1 butunga necha " + unit + "\" va \"1 butun narxi\" to'g'ri kiritilishi kerak" };
+    }
+    return {
+      unit,
+      dual_mode: true,
+      whole_size,
+      whole_price,
+      whole_label: String(body.whole_label || '').trim() || 'butun',
+    };
+  }
+  return { unit, dual_mode: false, whole_size: 0, whole_price: 0, whole_label: '' };
 }
 
 // (6) Mahsulotda tayyor (ishlab chiqaruvchidan kelgan) shtrix-kod bo'lmasa,
@@ -138,6 +177,10 @@ router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => 
   const qty = parseNumber(quantity);
   const normalizedCostPrice = parseNumber(costPrice ?? purchase_price);
 
+  // (3/c) O'lchov birligi va ikki xil rejim (butun/o'lchovga bo'lib sotish).
+  const unitFields = validateUnitFields(req.body);
+  if (unitFields.error) return res.status(400).json({ error: unitFields.error });
+
   // (6) Mahsulot o'zining tayyor shtrix-kodi bilan kelgan bo'lsa, shuni
   // ishlatamiz (boshqa mahsulotda takrorlanmasligi kerak); bo'sh qoldirilsa
   // pastda (id ma'lum bo'lgach) Posway o'zi noyob kod yaratib beradi.
@@ -181,6 +224,14 @@ router.post('/', authRequired, roleRequired('admin', 'omborchi'), (req, res) => 
     // (6) Tayyor kod bo'lsa o'shani, aks holda o'zimiz yaratgan noyob
     // shtrix-kodni saqlaymiz — hech qanday mahsulot shtrix-kodsiz qolmaydi.
     barcode: trimmedBarcode || generateBarcode(id),
+    // (3/c) unit — asosiy o'lchov birligi (qoldiq shu birlikda saqlanadi).
+    // dual_mode yoqilsa, sale_price "o'lchovga bo'lib" sotilganda 1 birlik
+    // narxi bo'lib qoladi, whole_price esa "butun" holda sotilgandagi narx.
+    unit: unitFields.unit,
+    dual_mode: unitFields.dual_mode,
+    whole_size: unitFields.whole_size,
+    whole_price: unitFields.whole_price,
+    whole_label: unitFields.whole_label,
     created_at: now,
     updated_at: now,
   };
@@ -248,6 +299,11 @@ router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) =
   const { name, brand, category, part_type, costPrice, purchase_price, sale_price, quantity, min_quantity, car_models, sold_count, sales_count, barcode } = req.body;
   const normalizedCostPrice = parseNumber(costPrice ?? purchase_price);
 
+  // (3/c) O'lchov birligi va ikki xil rejim — tahrirlashda ham xuddi
+  // yaratishdagi kabi tekshiriladi.
+  const unitFields = validateUnitFields(req.body);
+  if (unitFields.error) return res.status(400).json({ error: unitFields.error });
+
   // (6) Tahrirlashda shtrix-kod ham o'zgartirilishi mumkin — lekin
   // boshqa faol mahsulotda band qilingan kod bilan to'qnashmasligi kerak.
   // Bo'sh qoldirilsa, mahsulot shtrix-kodsiz qolib ketmasligi uchun avtomatik
@@ -276,6 +332,11 @@ router.put('/:id', authRequired, roleRequired('admin', 'omborchi'), (req, res) =
     min_quantity: parseNumber(min_quantity ?? data.products[idx].min_quantity ?? 2),
     car_models,
     barcode: resolvedBarcode,
+    unit: unitFields.unit,
+    dual_mode: unitFields.dual_mode,
+    whole_size: unitFields.whole_size,
+    whole_price: unitFields.whole_price,
+    whole_label: unitFields.whole_label,
     updated_at: new Date().toISOString(),
   };
 
