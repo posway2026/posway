@@ -6,6 +6,17 @@ function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
 }
 
+// (3/c-fix3) Mahsulotlar sahifasidagi "Yangi mahsulot" formasi bilan bir
+// xil o'lchov birligi ro'yxati — ikkala joyda ham bir xil ko'rinish bo'lishi
+// uchun.
+const UNIT_OPTIONS = [
+  { value: 'dona', label: 'Dona' },
+  { value: 'kg', label: 'Kilogramm (kg)' },
+  { value: 'gramm', label: 'Gramm' },
+  { value: 'metr', label: 'Metr' },
+  { value: 'litr', label: 'Litr' },
+];
+
 function emptyKirimLine(payment_type = 'naqd') {
   return {
     key: Math.random().toString(36).slice(2),
@@ -17,6 +28,14 @@ function emptyKirimLine(payment_type = 'naqd') {
     new_product_car_models: '',
     new_product_sale_price: '',
     new_product_min_quantity: 2,
+    // (3/c-fix3) Mahsulotlar sahifasidagi kabi o'lchov birligi va ikki
+    // xil rejim (dual_mode) maydonlari — endi shu yerning o'zida yangi
+    // mahsulot yaratganda ham to'liq kiritish mumkin.
+    new_product_unit: 'dona',
+    new_product_dual_mode: false,
+    new_product_whole_label: '',
+    new_product_whole_size: '',
+    new_product_whole_price: '',
     quantity: '',
     unit_cost: '',
     payment_type,
@@ -43,6 +62,10 @@ export default function SupplierDebts() {
   const [docDate, setDocDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [docNote, setDocNote] = useState('');
   const [kirimLines, setKirimLines] = useState([emptyKirimLine()]);
+  // (2026-09-20) AI orqali hisob-faktura/narxlar ro'yxati rasmidan
+  // mahsulotlarni avtomatik o'qib, pastdagi qatorlarga joylash.
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   const [editingEntry, setEditingEntry] = useState(null);
   const [editForm, setEditForm] = useState({ quantity: '', unit_cost: '', payment_type: 'naqd', note: '' });
   const [docView, setDocView] = useState(null);
@@ -112,11 +135,94 @@ export default function SupplierDebts() {
     setDocDate(new Date().toISOString().slice(0, 10));
     setDocNote('');
     setKirimLines([emptyKirimLine()]);
+    setAiError('');
+    setAiLoading(false);
     setKirimModal(true);
   }
 
   function updateKirimLine(key, patch) {
     setKirimLines((lines) => lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  // (3/c-fix3) Bitta qatorning "hozirgi o'lchov birligi"ni topish — yangi
+  // mahsulot bo'lsa tanlangan birlik, mavjud mahsulot bo'lsa o'sha
+  // mahsulotning birligi (Soni/Tan narx maydonlari shu birlikda ekanini
+  // ko'rsatish uchun, masalan "Soni (litr)").
+  function lineUnit(line) {
+    if (line.isNew) return line.new_product_unit || 'dona';
+    const p = products.find((pp) => pp.id == line.product_id);
+    return p?.unit || 'dona';
+  }
+
+  // (2026-09-20) Rasmni serverga yuborishdan oldin kichraytirib olamiz —
+  // shunda ham yuklash tezroq, ham AI xarajati (token) kamroq bo'ladi.
+  function resizeImageFile(file, maxDim = 1600, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            const scale = maxDim / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleAiImagesSelected(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // xuddi shu faylni qayta tanlasa ham ishga tushishi uchun
+    if (files.length === 0) return;
+    if (files.length > 5) {
+      setAiError("Bir vaqtda ko'pi bilan 5 ta rasm yuborish mumkin");
+      return;
+    }
+    setAiError('');
+    setAiLoading(true);
+    try {
+      const images = await Promise.all(files.map((f) => resizeImageFile(f)));
+      const res = await api.extractInvoiceImages(images);
+      const items = res.items || [];
+      if (items.length === 0) {
+        setAiError("AI rasmda mahsulot topa olmadi. Aniqroq/yorug'roq rasm bilan urinib ko'ring yoki qo'lda kiriting.");
+        return;
+      }
+      setKirimLines((lines) => {
+        // Agar hozircha ro'yxatda faqat bitta to'ldirilmagan qator bo'lsa,
+        // shuni AI natijalariga almashtiramiz; aks holda oxiriga qo'shamiz.
+        const isSingleEmpty = lines.length === 1 && !lines[0].new_product_name && !lines[0].product_id && !lines[0].quantity;
+        const base = isSingleEmpty ? [] : lines;
+        const lastPaymentType = lines[lines.length - 1]?.payment_type || 'naqd';
+        const newLines = items.map((it) => ({
+          ...emptyKirimLine(lastPaymentType),
+          isNew: true,
+          new_product_name: it.name || '',
+          new_product_brand: it.brand || '',
+          new_product_unit: it.unit || 'dona',
+          quantity: it.quantity || '',
+          unit_cost: it.unit_cost || '',
+        }));
+        return [...base, ...newLines];
+      });
+    } catch (err) {
+      setAiError(err.message || "AI bilan bog'lanishda xatolik yuz berdi");
+    } finally {
+      setAiLoading(false);
+    }
   }
 
   function addKirimLine() {
@@ -146,6 +252,12 @@ export default function SupplierDebts() {
         );
         if (!ok) return;
       }
+      // (3/c-fix3) Mahsulotlar sahifasidagi kabi — ikki xil rejim
+      // yoqilgan bo'lsa, "1 butunga necha X" va "1 butun narxi" majburiy.
+      if (line.isNew && line.new_product_dual_mode && (Number(line.new_product_whole_size || 0) <= 0 || Number(line.new_product_whole_price || 0) <= 0)) {
+        alert(`"${line.new_product_name || 'mahsulot'}" uchun "1 butunga necha ${line.new_product_unit}" va "1 butun narxi" maydonlarini to'g'ri kiriting`);
+        return;
+      }
     }
 
     try {
@@ -160,6 +272,11 @@ export default function SupplierDebts() {
           new_product_car_models: line.isNew ? line.new_product_car_models : undefined,
           new_product_sale_price: line.isNew ? +line.new_product_sale_price : undefined,
           new_product_min_quantity: line.isNew ? +line.new_product_min_quantity : undefined,
+          new_product_unit: line.isNew ? (line.new_product_unit || 'dona') : undefined,
+          new_product_dual_mode: line.isNew ? !!line.new_product_dual_mode : undefined,
+          new_product_whole_label: line.isNew && line.new_product_dual_mode ? (line.new_product_whole_label || '').trim() || 'butun' : undefined,
+          new_product_whole_size: line.isNew && line.new_product_dual_mode ? Number(line.new_product_whole_size || 0) : undefined,
+          new_product_whole_price: line.isNew && line.new_product_dual_mode ? Number(line.new_product_whole_price || 0) : undefined,
           quantity: +line.quantity,
           unit_cost: +line.unit_cost,
           payment_type: line.payment_type,
@@ -333,7 +450,9 @@ export default function SupplierDebts() {
       </div>
 
       {payModal && (
-        <div className="modal-overlay" onClick={() => setPayModal(null)}>
+        // (3/c-fix1) To'lov summasi tasodifan yo'qolib qolmasligi uchun
+        // tashqariga bosilganda endi yopilmaydi.
+        <div className="modal-overlay">
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handlePay}>
             <h3 style={{ marginTop: 0 }}>{payModal.supplier_name} — to'lov qilish</h3>
             <div className="form-row"><label>Qoldiq qarz: {money(payModal.balance)}</label></div>
@@ -354,7 +473,7 @@ export default function SupplierDebts() {
       )}
 
       {oldDebtModal && (
-        <div className="modal-overlay" onClick={() => setOldDebtModal(false)}>
+        <div className="modal-overlay">
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleAddOldDebt}>
             <h3 style={{ marginTop: 0 }}>Eski qarz qo'shish</h3>
             <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>
@@ -457,7 +576,10 @@ export default function SupplierDebts() {
           hujjat sifatida qo'shish — har bir mahsulot o'z qatorida, "+ Yana
           mahsulot qo'shish" bilan istalgancha qator qo'shish mumkin. */}
       {kirimModal && detail && (
-        <div className="modal-overlay" onClick={() => setKirimModal(false)}>
+        // (3/c-fix1) Bu — bir nechta mahsulotli, uzun/skroll qilinadigan
+        // forma ("yuk kirim qilish"); aynan shu yerda tashqariga bosilib
+        // hammasi yo'qolib qolishi eng ko'p shikoyat qilingan holat edi.
+        <div className="modal-overlay">
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleAddKirim} style={{ maxWidth: 760 }}>
             <h3 style={{ marginTop: 0 }}>{detail.supplier_name} — yangi kirim hujjati</h3>
 
@@ -470,6 +592,22 @@ export default function SupplierDebts() {
                 <label>Hujjat izohi (ixtiyoriy)</label>
                 <input value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="masalan: bozordan olingan yuk" />
               </div>
+            </div>
+
+            {/* (2026-09-20) AI yordamida tez kiritish — hisob-faktura yoki
+                narxlar ro'yxati rasmi(lari) yuklansa, AI mahsulotlarni o'qib
+                pastga avtomatik qator qilib qo'shadi. Bu FAQAT qo'shimcha
+                imkoniyat — hech narsa qo'lda kiritishni almashtirmaydi, va
+                AI natijalari saqlashdan oldin albatta tekshirilishi/
+                to'ldirilishi kerak (masalan sotish narxi AI'ga ko'rinmaydi). */}
+            <div className="card" style={{ background: 'var(--panel-light)', padding: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>🤖 AI yordamida tez kiritish (ixtiyoriy)</div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+                Hisob-faktura yoki narxlar ro'yxatining rasmini (bir nechtasini ham) yuklang — AI mahsulotlarni o'qib, pastga avtomatik qator qilib qo'shadi. Qo'shilgandan keyin albatta tekshirib, sotish narxini kiritib saqlang.
+              </div>
+              <input type="file" accept="image/*" multiple onChange={handleAiImagesSelected} disabled={aiLoading} />
+              {aiLoading && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>⏳ AI rasmni o'qimoqda, biroz kuting...</div>}
+              {aiError && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6 }}>{aiError}</div>}
             </div>
 
             {kirimLines.map((line, idx) => (
@@ -495,9 +633,24 @@ export default function SupplierDebts() {
                       {/* (14b) Mavjud mahsulotlar nomidan tavsiya — tasodifan
                           takroriy nom bilan yangi yozuv ochib yubormaslik uchun. */}
                       <input required list="existing-product-names-list-supplier" value={line.new_product_name} onChange={(e) => updateKirimLine(line.key, { new_product_name: e.target.value })} />
+                      {/* (3/c-fix2) Endi shunchaki ogohlantirish emas —
+                          bosilsa shu qatorni darhol "mavjud mahsulot"ga
+                          almashtirib, o'sha mahsulotni tanlab qo'yadigan
+                          tugma ham bor. */}
                       {line.new_product_name && products.some((p) => p.name.toLowerCase() === line.new_product_name.trim().toLowerCase()) && (
                         <div style={{ fontSize: 12, color: 'var(--orange, #b8860b)', marginTop: 4 }}>
-                          ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor — "Yangi mahsulot" belgisini olib, ro'yxatdan tanlashni o'ylab ko'ring.
+                          ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor.
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ marginLeft: 8, fontSize: 11, padding: '2px 8px' }}
+                            onClick={() => {
+                              const match = products.find((p) => p.name.toLowerCase() === line.new_product_name.trim().toLowerCase());
+                              if (match) updateKirimLine(line.key, { isNew: false, product_id: String(match.id) });
+                            }}
+                          >
+                            Shu mahsulotni tanlash
+                          </button>
                         </div>
                       )}
                     </div>
@@ -519,9 +672,54 @@ export default function SupplierDebts() {
                       <label>Mos mashina modellari</label>
                       <input value={line.new_product_car_models} onChange={(e) => updateKirimLine(line.key, { new_product_car_models: e.target.value })} placeholder="masalan: Nexia, Cobalt, Malibu" />
                     </div>
+                    {/* (3/c-fix3) Mahsulotlar sahifasidagi bilan bir xil —
+                        o'lchov birligi va ikki xil rejim (dual_mode). */}
+                    <div className="form-row">
+                      <label>O'lchov birligi</label>
+                      <select value={line.new_product_unit} onChange={(e) => updateKirimLine(line.key, { new_product_unit: e.target.value })}>
+                        {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        id={`dual_mode_${line.key}`}
+                        style={{ width: 'auto' }}
+                        checked={!!line.new_product_dual_mode}
+                        onChange={(e) => updateKirimLine(line.key, { new_product_dual_mode: e.target.checked })}
+                      />
+                      <label htmlFor={`dual_mode_${line.key}`} style={{ marginBottom: 0 }}>
+                        Ikki xil rejimda sotish (masalan: butun shisha HAM, litrlab HAM)
+                      </label>
+                    </div>
+                    {line.new_product_dual_mode && (
+                      <div className="card" style={{ background: 'var(--panel)', padding: 12, marginBottom: 14 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>
+                          Ikkala rejim ham BITTA umumiy qoldiqdan ({line.new_product_unit}) kamayadi.
+                        </div>
+                        <div className="form-row">
+                          <label>"Butun"ning nomi (masalan: shisha, quti, rulon)</label>
+                          <input value={line.new_product_whole_label} onChange={(e) => updateKirimLine(line.key, { new_product_whole_label: e.target.value })} placeholder="masalan: shisha" />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div className="form-row">
+                            <label>1 {line.new_product_whole_label || 'butun'}ga necha {line.new_product_unit} *</label>
+                            {/* (2026-09-21) type="text" + inputMode — ba'zi
+                                kompyuterlarda type="number" nuqtani (".")
+                                rad etib, faqat vergulni (",") qabul qilar
+                                edi. Endi ikkalasi ham ishlaydi. */}
+                            <input required type="text" inputMode="decimal" value={line.new_product_whole_size} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_whole_size: e.target.value.replace(',', '.') })} />
+                          </div>
+                          <div className="form-row">
+                            <label>1 {line.new_product_whole_label || 'butun'} narxi *</label>
+                            <input required type="number" value={line.new_product_whole_price} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_whole_price: e.target.value })} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div className="form-row">
-                        <label>Sotish narxi *</label>
+                        <label>{line.new_product_dual_mode ? `1 ${line.new_product_unit} narxi (o'lchovga bo'lib sotilganda) *` : 'Sotish narxi *'}</label>
                         <input required type="number" value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_sale_price: e.target.value })} />
                       </div>
                       <div className="form-row">
@@ -542,11 +740,11 @@ export default function SupplierDebts() {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div className="form-row">
-                    <label>Soni *</label>
-                    <input required type="number" value={line.quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { quantity: e.target.value })} />
+                    <label>Soni ({lineUnit(line)}) *</label>
+                    <input required type="text" inputMode="decimal" value={line.quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { quantity: e.target.value.replace(',', '.') })} />
                   </div>
                   <div className="form-row">
-                    <label>Tan narx (dona uchun) *</label>
+                    <label>1 {lineUnit(line)} tan narxi *</label>
                     <input required type="number" value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { unit_cost: e.target.value })} />
                   </div>
                 </div>
@@ -620,7 +818,7 @@ export default function SupplierDebts() {
       )}
 
       {editingEntry && (
-        <div className="modal-overlay" onClick={() => setEditingEntry(null)}>
+        <div className="modal-overlay">
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleSaveEdit}>
             <h3 style={{ marginTop: 0 }}>Kirimni tahrirlash</h3>
             {editingEntry.product_id ? (
