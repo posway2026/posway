@@ -125,6 +125,39 @@ export default function Pos() {
   const [message, setMessage] = useState('');
   // { id, field: 'price' | 'warranty' } | null
   const [editingField, setEditingField] = useState(null);
+  // (2026-09-21) Kasr miqdor (masalan 0.2 litr) yozayotganda maydon
+  // qiymati har bosilgan tugmadan keyin darhol "yaxlitlangan" songa
+  // aylanib qolsa, "0" -> "0." -> "0.2" deb yozish imkonsiz bo'lib
+  // qoladi (chunki har safar "0.01"ga tekislanib, keyingi belgi
+  // shunga qo'shilib ketaveradi). Shuning uchun yozayotganda FAQAT
+  // shu qatorning "qoralama" matnini ko'rsatamiz, haqiqiy miqdor esa
+  // faqat maydondan chiqilganda (blur) yakuniy hisoblanadi.
+  const [qtyDrafts, setQtyDrafts] = useState({});
+
+  function handleQtyDraftChange(lineId, raw) {
+    const normalized = raw.replace(',', '.');
+    setQtyDrafts((d) => ({ ...d, [lineId]: normalized }));
+    // Yozish jarayonida ham savat jami darhol yangilanib tursin —
+    // lekin bu yerda ELCHIQTAN kam bo'lsa ham majburiy ko'tarilmaydi
+    // (faqat blur bo'lganda minimal qiymatga tekislanadi).
+    const val = Number(normalized);
+    if (Number.isFinite(val) && val >= 0) {
+      updateActiveCart((c) => ({
+        cart: c.cart.map((it) => (it.line_id === lineId ? { ...it, quantity: val } : it)),
+      }));
+    }
+  }
+
+  function commitQtyDraft(lineId) {
+    setQtyDrafts((d) => {
+      if (!(lineId in d)) return d;
+      const rest = { ...d };
+      delete rest[lineId];
+      return rest;
+    });
+    // Blur bo'lganda haqiqiy minimal qiymatga tekislaymiz.
+    updateQty(lineId, cart.find((it) => it.line_id === lineId)?.quantity);
+  }
   const customerBoxRef = useRef(null);
   const searchRef = useRef(null);
   // (29/40) Har bir tugallangan sotuvdan keyin chek — mijozga chop etib
@@ -313,17 +346,18 @@ export default function Pos() {
     }
   }
 
-  // (3/c) Endi savat qatorlari `line_id` orqali aniqlanadi (product_id
-  // emas) — chunki bitta mahsulot ikki xil rejimda (butun + o'lchov) bir
-  // vaqtda savatda bo'lishi mumkin. Kasr birliklar (kg/gramm/metr/litr)
-  // uchun minimal miqdor 0.01, aks holda (dona yoki "butun" rejimi) — 1.
+  // (2026-09-21) Miqdorni to'g'ridan-to'g'ri (masalan tashqi hodisadan)
+  // o'rnatish uchun — endi asosiy qo'lda kiritish maydoni buni ChAQIRMAYDI
+  // (qtyDrafts/commitQtyDraft orqali ishlaydi, yuqorida), lekin stepQty va
+  // boshqa joylar uchun umumiy "yakuniy tekislash" mantig'i shu yerda.
   function updateQty(lineId, qty) {
     updateActiveCart((c) => ({
       cart: c.cart.map((it) => {
         if (it.line_id !== lineId) return it;
         const decimal = isDecimalLine(it);
         const minQty = decimal ? 0.01 : 1;
-        const val = Number(qty);
+        const normalized = typeof qty === 'string' ? qty.replace(',', '.') : qty;
+        const val = Number(normalized);
         return { ...it, quantity: Number.isFinite(val) ? Math.max(minQty, val) : minQty };
       }),
     }));
@@ -679,26 +713,30 @@ export default function Pos() {
                   {kioskMode ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                       <button type="button" className="btn secondary" style={{ padding: '4px 10px', fontSize: 16, fontWeight: 700 }} onClick={() => stepQty(it.line_id, -1)}>−</button>
+                      {/* (2026-09-21) type="text" + inputMode — ba'zi
+                          kompyuter/brauzer sozlamalarida type="number"
+                          faqat vergulni ("," ) qabul qilib, nuqtani (".")
+                          butunlay rad etar edi. Endi ikkalasi ham ishlaydi. */}
                       <input
-                        type="number"
-                        step={decimal ? '0.01' : '1'}
+                        type="text"
+                        inputMode="decimal"
                         style={{ width: 46, textAlign: 'center', padding: '6px 4px' }}
-                        value={it.quantity}
-                        max={it.max}
+                        value={qtyDrafts[it.line_id] ?? it.quantity}
                         onFocus={(e) => e.target.select()}
-                        onChange={(e) => updateQty(it.line_id, +e.target.value)}
+                        onChange={(e) => handleQtyDraftChange(it.line_id, e.target.value)}
+                        onBlur={() => commitQtyDraft(it.line_id)}
                       />
                       <button type="button" className="btn secondary" style={{ padding: '4px 10px', fontSize: 16, fontWeight: 700 }} onClick={() => stepQty(it.line_id, 1)}>+</button>
                     </div>
                   ) : (
                     <input
-                      type="number"
-                      step={decimal ? '0.01' : '1'}
+                      type="text"
+                      inputMode="decimal"
                       style={{ width: 60 }}
-                      value={it.quantity}
-                      max={it.max}
+                      value={qtyDrafts[it.line_id] ?? it.quantity}
                       onFocus={(e) => e.target.select()}
-                      onChange={(e) => updateQty(it.line_id, +e.target.value)}
+                      onChange={(e) => handleQtyDraftChange(it.line_id, e.target.value)}
+                      onBlur={() => commitQtyDraft(it.line_id)}
                     />
                   )}
 
