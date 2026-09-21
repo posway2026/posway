@@ -11,12 +11,16 @@ import cashMovementRoutes from './routes/cashMovements.js';
 import supplierDebtRoutes from './routes/supplierDebts.js';
 import cashCloseRoutes from './routes/cashCloses.js';
 import stockMovementRoutes from './routes/stockMovements.js';
+import aiExtractRoutes from './routes/aiExtract.js';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// (2026-09-20) Standart limit (100kb) hisob-faktura rasmlari (base64)
+// uchun juda kichik — AI orqali rasmdan mahsulot o'qish funksiyasi bir
+// necha rasmni birga yuborishi mumkin, shuning uchun limitni oshiramiz.
+app.use(express.json({ limit: '20mb' }));
 
 app.use('/api/auth', authRoutes);
 app.use('/api/products', productRoutes);
@@ -27,6 +31,7 @@ app.use('/api/cash-movements', cashMovementRoutes);
 app.use('/api/supplier-debts', supplierDebtRoutes);
 app.use('/api/cash-closes', cashCloseRoutes);
 app.use('/api/stock-movements', stockMovementRoutes);
+app.use('/api/ai', aiExtractRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
