@@ -7,7 +7,7 @@ const router = Router();
 
 // (3/c) Ruxsat etilgan o'lchov birliklari — "dona" standart, qolganlari
 // kasr (0.5, 1.25 va h.k.) miqdorda sotilishi mumkin.
-const VALID_UNITS = ['dona', 'kg', 'gramm', 'metr', 'litr'];
+export const VALID_UNITS = ['dona', 'kg', 'gramm', 'metr', 'litr'];
 
 function normalizeProduct(product = {}) {
   const costPrice = Number(product.costPrice ?? product.purchase_price ?? 0) || 0;
@@ -37,7 +37,7 @@ function parseNumber(value) {
 // sababli bu rejim yoqilganda whole_size (1 butunga necha baza-birlik
 // to'g'ri kelishi) va whole_price (1 butun narxi) MAJBURIY — aks holda
 // ombordan qancha ayirishni hisoblab bo'lmaydi.
-function validateUnitFields(body) {
+export function validateUnitFields(body) {
   const unit = VALID_UNITS.includes(body.unit) ? body.unit : 'dona';
   const dual_mode = !!body.dual_mode;
   if (dual_mode) {
