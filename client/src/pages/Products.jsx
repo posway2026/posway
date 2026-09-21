@@ -431,7 +431,11 @@ export default function Products() {
       </div>
 
       {modalOpen && (
-        <div className="modal-overlay" onClick={() => setModalOpen(false)}>
+        // (3/c-fix1) Forma uzun/skroll qilinadigan bo'lgani uchun, tashqariga
+        // tasodifan bosilib ketsa kiritilgan hamma ma'lumot yo'qolib
+        // qolmasligi kerak — shuning uchun bu yerda ENDI overlay bosilganda
+        // yopilmaydi, faqat "Bekor qilish" tugmasi orqali yopiladi.
+        <div className="modal-overlay">
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleSave}>
             <h3 style={{ marginTop: 0 }}>{editingId ? 'Mahsulotni tahrirlash' : 'Yangi mahsulot'}</h3>
             <div className="form-row">
@@ -440,11 +444,30 @@ export default function Products() {
                   nomli mahsulot allaqachon bor bo'lsa (masalan qoldig'i oz qolgan),
                   tasodifan takroriy nom bilan yangi yozuv ochib yubormaslik uchun. */}
               <input required list="existing-product-names-list" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-              {!editingId && form.name && activeProducts.some((p) => p.name.toLowerCase() === form.name.trim().toLowerCase()) && (
-                <div style={{ fontSize: 12, color: 'var(--orange, #b8860b)', marginTop: 4 }}>
-                  ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor — ehtimol shu mahsulotga "📥 Kirim" qilish kerakdir, yangisini yaratish o'rniga.
-                </div>
-              )}
+              {/* (3/c-fix2) Endi shunchaki ogohlantirish emas — bosilsa
+                  darhol shu mahsulotga Kirim oynasini ochib beradigan
+                  tugma ham bor (avval bu yerda hech qanday amal yo'q edi,
+                  foydalanuvchi qo'lda "Mahsulotlar" ro'yxatidan qidirib
+                  topishga majbur edi). */}
+              {!editingId && form.name && (() => {
+                const match = activeProducts.find((p) => p.name.toLowerCase() === form.name.trim().toLowerCase());
+                if (!match) return null;
+                return (
+                  <div style={{ fontSize: 12, color: 'var(--orange, #b8860b)', marginTop: 4 }}>
+                    ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor — yangisini yaratish o'rniga shu mahsulotga kirim qiling.
+                    <div style={{ marginTop: 6 }}>
+                      <button
+                        type="button"
+                        className="btn secondary"
+                        style={{ fontSize: 12, padding: '4px 10px' }}
+                        onClick={() => { setModalOpen(false); openKirim(match); }}
+                      >
+                        📥 "{match.name}"ga Kirim qilish
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
             <div className="form-row">
               <label>Brend</label>
@@ -494,7 +517,11 @@ export default function Products() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <div className="form-row">
                     <label>1 {form.whole_label || 'butun'}ga necha {form.unit} *</label>
-                    <input required type="number" step="0.01" value={form.whole_size} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, whole_size: e.target.value })} />
+                    {/* (2026-09-21) type="text" + inputMode — ba'zi
+                        kompyuterlarda type="number" faqat vergul (",")
+                        orqali kasr son kiritishga ruxsat berib, nuqtani
+                        (".") rad etar edi. Endi ikkalasi ham qabul qilinadi. */}
+                    <input required type="text" inputMode="decimal" value={form.whole_size} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, whole_size: e.target.value.replace(',', '.') })} />
                   </div>
                   <div className="form-row">
                     <label>1 {form.whole_label || 'butun'} narxi *</label>
@@ -561,14 +588,16 @@ export default function Products() {
         </div>
       )}
       {kirimProduct && (
-        <div className="modal-overlay" onClick={() => setKirimProduct(null)}>
+        // (3/c-fix1) Xuddi shu sabab bilan — kirim summasi/ta'minotchi kabi
+        // ma'lumotlar tasodifan yo'qolib qolmasligi uchun.
+        <div className="modal-overlay">
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleKirimSave}>
             <h3 style={{ marginTop: 0 }}>Kirim: {kirimProduct.name}</h3>
             <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 10 }}>Hozirgi qoldiq: {kirimProduct.quantity} {kirimProduct.unit || 'dona'}</div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div className="form-row">
                 <label>Qo'shiladigan miqdor ({kirimProduct.unit || 'dona'}) *</label>
-                <input required type="number" step="0.01" value={kirimForm.quantity} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, quantity: e.target.value })} />
+                <input required type="text" inputMode="decimal" value={kirimForm.quantity} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, quantity: e.target.value.replace(',', '.') })} />
               </div>
               <div className="form-row">
                 <label>1 {kirimProduct.unit || 'dona'} tan narxi *</label>
