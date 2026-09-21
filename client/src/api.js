@@ -67,6 +67,10 @@ export const api = {
   deleteSupplierDebtEntry: (id) => request(`/supplier-debts/debt/${id}`, { method: 'DELETE' }),
   getKirimDocument: (id) => request(`/supplier-debts/kirim-document/${id}`),
   deleteKirimDocument: (id) => request(`/supplier-debts/kirim-document/${id}`, { method: 'DELETE' }),
+  // (2026-09-20) Hisob-faktura/narxlar ro'yxati rasmidan AI yordamida
+  // mahsulotlarni avtomatik o'qib olish (ixtiyoriy — server ANTHROPIC_API_KEY
+  // sozlanmagan bo'lsa, aniq xato xabari qaytadi, oddiy kiritish davom etadi).
+  extractInvoiceImages: (images) => request('/ai/extract-invoice', { method: 'POST', body: JSON.stringify({ images }) }),
 
   listSales: (from, to) => request(`/sales${from && to ? `?from=${from}&to=${to}` : ''}`),
   getSale: (id) => request(`/sales/${id}`),
