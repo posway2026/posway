@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { readData, writeData, nextId } from '../db/store.js';
 import { authRequired } from '../middleware/auth.js';
 import { logStockMovement } from '../lib/stockMovements.js';
+// (3/c-fix3) Yangi mahsulot shu yerning o'zida yaratilganda ham
+// Mahsulotlar sahifasidagi bilan BIR XIL o'lchov birligi/ikki xil rejim
+// tekshiruvidan foydalanish uchun — ikki joyda mantiq takrorlanmasin.
+import { validateUnitFields } from './products.js';
 
 const router = Router();
 
@@ -136,11 +140,36 @@ function validateKirimItem(item) {
   if (cost <= 0) return "Tan narxni to'g'ri kiriting";
   if (!['naqd', 'karta', 'nasiya'].includes(payment_type)) return "To'lov turini tanlang";
   if (!product_id && !new_product_name) return "Mahsulotni tanlang yoki yangi nom kiriting";
+  // (3/c-fix3) Yangi mahsulot ikki xil rejimda yaratilayotgan bo'lsa, shu
+  // yerda OLDINDAN tekshiramiz (Mahsulotlar sahifasidagi kabi) — bu barcha
+  // satrlar tekshirilib bo'lgunga qadar hech narsa o'zgartirilmasligi
+  // kerak degan yuqoridagi qoidaga rioya qilish uchun muhim: agar bu
+  // tekshiruv processKirimItem ICHIDA (mahsulot allaqachon yaratilgandan
+  // keyin) bo'lganida, undan oldingi satrlar allaqachon qo'llanib
+  // bo'lgan holda xato qaytarilishi mumkin edi.
+  if (!product_id && new_product_name && item.new_product_dual_mode) {
+    const unitFields = validateUnitFields({
+      unit: item.new_product_unit,
+      dual_mode: true,
+      whole_size: item.new_product_whole_size,
+      whole_price: item.new_product_whole_price,
+      whole_label: item.new_product_whole_label,
+    });
+    if (unitFields.error) return `"${new_product_name}" uchun: ${unitFields.error}`;
+  }
   return null;
 }
 
 function processKirimItem(data, { supplier_name, item, now, performed_by, document_id }) {
-  const { product_id, new_product_name, new_product_brand, new_product_part_type, new_product_car_models, new_product_sale_price, new_product_min_quantity, quantity, unit_cost, payment_type, note } = item;
+  const {
+    product_id, new_product_name, new_product_brand, new_product_part_type, new_product_car_models,
+    new_product_sale_price, new_product_min_quantity,
+    // (3/c-fix3) Mahsulotlar sahifasidagi "Yangi mahsulot" formasi bilan
+    // bir xil o'lchov birligi / ikki xil rejim maydonlari — endi shu
+    // yerning o'zida ham to'liq kiritiladi.
+    new_product_unit, new_product_dual_mode, new_product_whole_label, new_product_whole_size, new_product_whole_price,
+    quantity, unit_cost, payment_type, note,
+  } = item;
   const qty = Number(quantity) || 0;
   const cost = Number(unit_cost) || 0;
 
@@ -159,6 +188,17 @@ function processKirimItem(data, { supplier_name, item, now, performed_by, docume
     // qolmaydi va sotish narxi 0 bo'lib qolib, sotib bo'lmay qolish xatosi
     // oldini oladi.
     const id = nextId(data, 'products');
+    // (3/c-fix3) validateKirimItem'da allaqachon tekshirilgan, shuning
+    // uchun bu yerda xato qaytmasligi kerak — baribir ehtiyot chorasi
+    // sifatida xato bo'lsa ham "dona" bo'yicha oddiy rejimga tushib
+    // qoladi (mahsulot yaratilishning o'zi to'xtab qolmasligi uchun).
+    const unitFields = validateUnitFields({
+      unit: new_product_unit,
+      dual_mode: !!new_product_dual_mode,
+      whole_size: new_product_whole_size,
+      whole_price: new_product_whole_price,
+      whole_label: new_product_whole_label,
+    });
     product = {
       id,
       name: new_product_name,
@@ -173,6 +213,11 @@ function processKirimItem(data, { supplier_name, item, now, performed_by, docume
       quantity: qty,
       min_quantity: Number(new_product_min_quantity ?? 2) || 2,
       car_models: new_product_car_models || '',
+      unit: unitFields.error ? 'dona' : unitFields.unit,
+      dual_mode: unitFields.error ? false : unitFields.dual_mode,
+      whole_label: unitFields.error ? '' : unitFields.whole_label,
+      whole_size: unitFields.error ? 0 : unitFields.whole_size,
+      whole_price: unitFields.error ? 0 : unitFields.whole_price,
       created_at: now,
       updated_at: now,
     };
