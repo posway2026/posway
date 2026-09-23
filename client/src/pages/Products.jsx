@@ -70,6 +70,22 @@ export default function Products() {
   const [kirimProduct, setKirimProduct] = useState(null);
   const [kirimForm, setKirimForm] = useState({ quantity: '', unit_cost: '', payment_type: 'naqd', supplier_name: '', note: '' });
   const [supplierNames, setSupplierNames] = useState([]);
+  // (2026-09-23) "Yuk kirim qilish (AI)" — Ta'minotchilarga qarzim
+  // sahifasidagi bilan bir xil, bir nechta mahsulotli va AI-yordamli kirim
+  // hujjati, endi Mahsulotlar sahifasidan ham to'g'ridan-to'g'ri ochiladi
+  // (ta'minotchi tanlash shart, chunki bu ham supplier-debts tarixiga yoziladi).
+  const [bulkKirimModal, setBulkKirimModal] = useState(false);
+  const [bulkKirimSupplier, setBulkKirimSupplier] = useState('');
+  const [bulkDocDate, setBulkDocDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [bulkDocNote, setBulkDocNote] = useState('');
+  const [bulkKirimLines, setBulkKirimLines] = useState([]);
+  const [bulkAiLoading, setBulkAiLoading] = useState(false);
+  const [bulkAiError, setBulkAiError] = useState('');
+  const [bulkPaymentMode, setBulkPaymentMode] = useState('naqd');
+  const [bulkMixedOpen, setBulkMixedOpen] = useState(false);
+  const [bulkMixedNaqd, setBulkMixedNaqd] = useState('');
+  const [bulkMixedKarta, setBulkMixedKarta] = useState('');
+  const [bulkMixedNasiya, setBulkMixedNasiya] = useState('');
   const [sortBy, setSortBy] = useState('created_desc');
   const [showLowStockOnly, setShowLowStockOnly] = useState(false);
   const [showStaleOnly, setShowStaleOnly] = useState(false);
@@ -115,6 +131,212 @@ export default function Products() {
       load(search);
     } catch (err) {
       alert(err.message || 'Kirim qilishda xatolik yuz berdi');
+    }
+  }
+
+  // (2026-09-23) "Yuk kirim qilish (AI)" — bir nechta mahsulotli kirim
+  // hujjati, Ta'minotchilarga qarzim sahifasidagi bilan bir xil mantiqda
+  // (bir xil server endpointi — /supplier-debts/:name/kirim — ishlatiladi),
+  // faqat bu yerda ta'minotchi nomini ham shu modalning o'zida tanlaymiz.
+  function emptyBulkKirimLine() {
+    return {
+      key: Math.random().toString(36).slice(2),
+      isNew: false,
+      product_id: '',
+      new_product_name: '',
+      new_product_brand: '',
+      new_product_part_type: 'original',
+      new_product_car_models: '',
+      new_product_sale_price: '',
+      new_product_min_quantity: 2,
+      new_product_unit: 'dona',
+      new_product_dual_mode: false,
+      new_product_whole_label: '',
+      new_product_whole_size: '',
+      new_product_whole_price: '',
+      quantity: '',
+      unit_cost: '',
+      note: '',
+    };
+  }
+
+  function openBulkKirimModal() {
+    setBulkKirimSupplier('');
+    setBulkDocDate(new Date().toISOString().slice(0, 10));
+    setBulkDocNote('');
+    setBulkKirimLines([emptyBulkKirimLine()]);
+    setBulkAiError('');
+    setBulkAiLoading(false);
+    setBulkPaymentMode('naqd');
+    setBulkMixedOpen(false);
+    setBulkMixedNaqd('');
+    setBulkMixedKarta('');
+    setBulkMixedNasiya('');
+    setBulkKirimModal(true);
+  }
+
+  function updateBulkKirimLine(key, patch) {
+    setBulkKirimLines((lines) => lines.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  function bulkLineUnit(line) {
+    if (line.isNew) return line.new_product_unit || 'dona';
+    const p = products.find((pp) => pp.id == line.product_id);
+    return p?.unit || 'dona';
+  }
+
+  function bulkKirimDocTotal() {
+    return bulkKirimLines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_cost || 0), 0);
+  }
+
+  // (2026-09-20) Rasmni serverga yuborishdan oldin kichraytirib olamiz.
+  function resizeBulkImageFile(file, maxDim = 1600, quality = 0.82) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            const scale = maxDim / Math.max(width, height);
+            width = Math.round(width * scale);
+            height = Math.round(height * scale);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', quality));
+        };
+        img.onerror = reject;
+        img.src = reader.result;
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function handleBulkAiImagesSelected(e) {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    if (files.length > 5) {
+      setBulkAiError("Bir vaqtda ko'pi bilan 5 ta rasm yuborish mumkin");
+      return;
+    }
+    setBulkAiError('');
+    setBulkAiLoading(true);
+    try {
+      const images = await Promise.all(files.map((f) => resizeBulkImageFile(f)));
+      const res = await api.extractInvoiceImages(images);
+      const items = res.items || [];
+      if (items.length === 0) {
+        setBulkAiError("AI rasmda mahsulot topa olmadi. Aniqroq/yorug'roq rasm bilan urinib ko'ring yoki qo'lda kiriting.");
+        return;
+      }
+      setBulkKirimLines((lines) => {
+        const isSingleEmpty = lines.length === 1 && !lines[0].new_product_name && !lines[0].product_id && !lines[0].quantity;
+        const base = isSingleEmpty ? [] : lines;
+        const newLines = items.map((it) => ({
+          ...emptyBulkKirimLine(),
+          isNew: true,
+          new_product_name: it.name || '',
+          new_product_brand: it.brand || '',
+          new_product_unit: it.unit || 'dona',
+          quantity: it.quantity || '',
+          unit_cost: it.unit_cost || '',
+        }));
+        return [...base, ...newLines];
+      });
+    } catch (err) {
+      setBulkAiError(err.message || "AI bilan bog'lanishda xatolik yuz berdi");
+    } finally {
+      setBulkAiLoading(false);
+    }
+  }
+
+  function addBulkKirimLine() {
+    setBulkKirimLines((lines) => [...lines, emptyBulkKirimLine()]);
+  }
+
+  function removeBulkKirimLine(key) {
+    setBulkKirimLines((lines) => (lines.length > 1 ? lines.filter((l) => l.key !== key) : lines));
+  }
+
+  async function handleBulkAddKirim(e) {
+    e.preventDefault();
+    if (!bulkKirimSupplier.trim()) {
+      alert("Ta'minotchi nomini kiriting");
+      return;
+    }
+
+    for (const line of bulkKirimLines) {
+      const salePrice = Number(line.new_product_sale_price) || 0;
+      const costPrice = Number(line.unit_cost) || 0;
+      if (line.isNew && salePrice > 0 && costPrice > 0 && salePrice < costPrice) {
+        const productLabel = line.new_product_name || 'mahsulot';
+        const ok = confirm(
+          `Diqqat! "${productLabel}" uchun sotish narxi (${money(salePrice)}) tan narxdan (${money(costPrice)}) past.\n\n` +
+          `Shunday davom etishga ishonchingiz komilmi?`
+        );
+        if (!ok) return;
+      }
+      if (line.isNew && line.new_product_dual_mode && (Number(line.new_product_whole_size || 0) <= 0 || Number(line.new_product_whole_price || 0) <= 0)) {
+        alert(`"${line.new_product_name || 'mahsulot'}" uchun "1 butunga necha ${line.new_product_unit}" va "1 butun narxi" maydonlarini to'g'ri kiriting`);
+        return;
+      }
+    }
+
+    const total = bulkKirimDocTotal();
+    let payment;
+    if (bulkPaymentMode === 'aralash') {
+      payment = {
+        naqd: Number(bulkMixedNaqd) || 0,
+        karta: Number(bulkMixedKarta) || 0,
+        nasiya: Number(bulkMixedNasiya) || 0,
+      };
+      const sum = payment.naqd + payment.karta + payment.nasiya;
+      if (Math.round(sum) !== Math.round(total)) {
+        alert(`To'lov summalari (${money(sum)}) hujjat jamisiga (${money(total)}) teng emas`);
+        return;
+      }
+    } else {
+      payment = {
+        naqd: bulkPaymentMode === 'naqd' ? total : 0,
+        karta: bulkPaymentMode === 'karta' ? total : 0,
+        nasiya: bulkPaymentMode === 'nasiya' ? total : 0,
+      };
+    }
+
+    try {
+      await api.addSupplierKirim(bulkKirimSupplier.trim(), {
+        date: bulkDocDate,
+        note: bulkDocNote,
+        payment,
+        items: bulkKirimLines.map((line) => ({
+          product_id: line.isNew ? null : line.product_id || null,
+          new_product_name: line.isNew ? line.new_product_name : null,
+          new_product_brand: line.isNew ? line.new_product_brand : undefined,
+          new_product_part_type: line.isNew ? line.new_product_part_type : undefined,
+          new_product_car_models: line.isNew ? line.new_product_car_models : undefined,
+          new_product_sale_price: line.isNew ? +line.new_product_sale_price : undefined,
+          new_product_min_quantity: line.isNew ? +line.new_product_min_quantity : undefined,
+          new_product_unit: line.isNew ? (line.new_product_unit || 'dona') : undefined,
+          new_product_dual_mode: line.isNew ? !!line.new_product_dual_mode : undefined,
+          new_product_whole_label: line.isNew && line.new_product_dual_mode ? (line.new_product_whole_label || '').trim() || 'butun' : undefined,
+          new_product_whole_size: line.isNew && line.new_product_dual_mode ? Number(line.new_product_whole_size || 0) : undefined,
+          new_product_whole_price: line.isNew && line.new_product_dual_mode ? Number(line.new_product_whole_price || 0) : undefined,
+          quantity: +line.quantity,
+          unit_cost: +line.unit_cost,
+          note: line.note,
+        })),
+      });
+      setBulkKirimModal(false);
+      load(search);
+      api.listSupplierDebts().then((rows) => setSupplierNames(rows.map((r) => r.supplier_name))).catch(() => {});
+    } catch (err) {
+      alert(err.message || "Kirim qo'shishda xatolik yuz berdi");
     }
   }
 
@@ -295,7 +517,10 @@ export default function Products() {
     <div>
       <div className="topbar">
         <h2 style={{ margin: 0 }}>Mahsulotlar</h2>
-        {canEdit && <button className="btn" onClick={openNew}>+ Yangi mahsulot</button>}
+        <div style={{ display: 'flex', gap: 8 }}>
+          {canEdit && <button className="btn secondary" onClick={openBulkKirimModal}>🤖 Yuk kirim qilish</button>}
+          {canEdit && <button className="btn" onClick={openNew}>+ Yangi mahsulot</button>}
+        </div>
       </div>
 
       <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -626,6 +851,264 @@ export default function Products() {
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" className="btn secondary" style={{ flex: 1 }} onClick={() => setKirimProduct(null)}>Bekor qilish</button>
               <button className="btn" style={{ flex: 1 }}>Saqlash</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* (2026-09-23) "Yuk kirim qilish (AI)" — Ta'minotchilarga qarzim
+          sahifasidagi ko'p-mahsulotli, AI-yordamli kirim hujjati, endi
+          Mahsulotlar sahifasidan ham ochiladi (ta'minotchi shu yerda
+          tanlanadi). Tashqariga bosilganda yopilmaydi — ma'lumot yo'qolib
+          qolmasligi uchun. */}
+      {bulkKirimModal && (
+        <div className="modal-overlay">
+          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleBulkAddKirim} style={{ maxWidth: 940 }}>
+            <h3 style={{ marginTop: 0 }}>Yuk kirim qilish</h3>
+
+            <div className="form-row">
+              <label>Ta'minotchi nomi *</label>
+              <input required list="supplier-names-list" value={bulkKirimSupplier} onChange={(e) => setBulkKirimSupplier(e.target.value)} placeholder="masalan: Mavlon aka, Timsoll" />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 8 }}>
+              <div className="form-row">
+                <label>Yetkazib berish sanasi</label>
+                <input type="date" value={bulkDocDate} onChange={(e) => setBulkDocDate(e.target.value)} />
+              </div>
+              <div className="form-row">
+                <label>Hujjat izohi (ixtiyoriy)</label>
+                <input value={bulkDocNote} onChange={(e) => setBulkDocNote(e.target.value)} placeholder="masalan: bozordan olingan yuk" />
+              </div>
+            </div>
+
+            <div className="card" style={{ background: 'var(--panel-light)', padding: 12, marginBottom: 14 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6 }}>🤖 AI yordamida tez kiritish (ixtiyoriy)</div>
+              <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 8 }}>
+                Hisob-faktura yoki narxlar ro'yxatining rasmini (bir nechtasini ham) yuklang — AI mahsulotlarni o'qib, pastga avtomatik qator qilib qo'shadi. Qo'shilgandan keyin albatta tekshirib, sotish narxini kiritib saqlang.
+              </div>
+              <input type="file" accept="image/*" multiple onChange={handleBulkAiImagesSelected} disabled={bulkAiLoading} />
+              {bulkAiLoading && <div style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 6 }}>⏳ AI rasmni o'qimoqda, biroz kuting...</div>}
+              {bulkAiError && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6 }}>{bulkAiError}</div>}
+            </div>
+
+            {bulkKirimLines.map((line, idx) => (
+              <div key={line.key} style={{ border: '2px solid var(--border, #333)', borderLeft: '5px solid var(--accent, #4a7dff)', borderRadius: 10, padding: 16, marginBottom: 16, background: 'var(--panel)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 30, height: 30, borderRadius: '50%', background: 'var(--accent, #4a7dff)',
+                      color: '#fff', fontWeight: 700, fontSize: 15, flexShrink: 0,
+                    }}>{idx + 1}</span>
+                    <b style={{ fontSize: 16 }}>{idx + 1}-mahsulot</b>
+                  </div>
+                  {bulkKirimLines.length > 1 && (
+                    <button type="button" className="btn danger" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => removeBulkKirimLine(line.key)}>O'chirish</button>
+                  )}
+                </div>
+
+                <div className="form-row">
+                  <label>
+                    <input type="checkbox" checked={line.isNew} onChange={(e) => updateBulkKirimLine(line.key, { isNew: e.target.checked })} style={{ marginRight: 6 }} />
+                    Yangi mahsulot (ro'yxatda yo'q)
+                  </label>
+                </div>
+
+                {line.isNew ? (
+                  <>
+                    <div className="form-row">
+                      <label>Mahsulot nomi *</label>
+                      <input required list="existing-product-names-list" value={line.new_product_name} onChange={(e) => updateBulkKirimLine(line.key, { new_product_name: e.target.value })} />
+                      {line.new_product_name && products.some((p) => p.name.toLowerCase() === line.new_product_name.trim().toLowerCase()) && (
+                        <div style={{ fontSize: 12, color: 'var(--orange, #b8860b)', marginTop: 4 }}>
+                          ⚠️ Bu nomdagi mahsulot ro'yxatda allaqachon bor.
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            style={{ marginLeft: 8, fontSize: 11, padding: '2px 8px' }}
+                            onClick={() => {
+                              const match = products.find((p) => p.name.toLowerCase() === line.new_product_name.trim().toLowerCase());
+                              if (match) updateBulkKirimLine(line.key, { isNew: false, product_id: String(match.id) });
+                            }}
+                          >
+                            Shu mahsulotni tanlash
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div className="form-row">
+                        <label>Brend</label>
+                        <input value={line.new_product_brand} onChange={(e) => updateBulkKirimLine(line.key, { new_product_brand: e.target.value })} />
+                      </div>
+                      <div className="form-row">
+                        <label>Turi</label>
+                        <select value={line.new_product_part_type} onChange={(e) => updateBulkKirimLine(line.key, { new_product_part_type: e.target.value })}>
+                          <option value="original">Original</option>
+                          <option value="oem">OEM (xitoy)</option>
+                          <option value="ishlatilgan">Ishlatilgan</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div className="form-row">
+                      <label>Mos mashina modellari</label>
+                      <input value={line.new_product_car_models} onChange={(e) => updateBulkKirimLine(line.key, { new_product_car_models: e.target.value })} placeholder="masalan: Nexia, Cobalt, Malibu" />
+                    </div>
+                    <div className="form-row">
+                      <label>O'lchov birligi</label>
+                      <select value={line.new_product_unit} onChange={(e) => updateBulkKirimLine(line.key, { new_product_unit: e.target.value })}>
+                        {UNIT_OPTIONS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-row" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        id={`bulk_dual_mode_${line.key}`}
+                        style={{ width: 'auto' }}
+                        checked={!!line.new_product_dual_mode}
+                        onChange={(e) => updateBulkKirimLine(line.key, { new_product_dual_mode: e.target.checked })}
+                      />
+                      <label htmlFor={`bulk_dual_mode_${line.key}`} style={{ marginBottom: 0 }}>
+                        Ikki xil rejimda sotish (masalan: butun shisha HAM, litrlab HAM)
+                      </label>
+                    </div>
+                    {line.new_product_dual_mode && (
+                      <div className="card" style={{ background: 'var(--panel)', padding: 12, marginBottom: 14 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-dim)', marginBottom: 10 }}>
+                          Ikkala rejim ham BITTA umumiy qoldiqdan ({line.new_product_unit}) kamayadi.
+                        </div>
+                        <div className="form-row">
+                          <label>"Butun"ning nomi (masalan: shisha, quti, rulon)</label>
+                          <input value={line.new_product_whole_label} onChange={(e) => updateBulkKirimLine(line.key, { new_product_whole_label: e.target.value })} placeholder="masalan: shisha" />
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                          <div className="form-row">
+                            <label>1 {line.new_product_whole_label || 'butun'}ga necha {line.new_product_unit} *</label>
+                            <input required type="text" inputMode="decimal" value={line.new_product_whole_size} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { new_product_whole_size: e.target.value.replace(',', '.') })} />
+                          </div>
+                          <div className="form-row">
+                            <label>1 {line.new_product_whole_label || 'butun'} narxi *</label>
+                            <input required type="number" value={line.new_product_whole_price} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { new_product_whole_price: e.target.value })} />
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div className="form-row">
+                        <label>{line.new_product_dual_mode ? `1 ${line.new_product_unit} narxi (o'lchovga bo'lib sotilganda) *` : 'Sotish narxi *'}</label>
+                        <input required type="number" value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { new_product_sale_price: e.target.value })} />
+                      </div>
+                      <div className="form-row">
+                        <label>Minimal qoldiq</label>
+                        <input type="number" value={line.new_product_min_quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { new_product_min_quantity: e.target.value })} />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="form-row">
+                    <label>Mahsulot *</label>
+                    <select required value={line.product_id} onChange={(e) => updateBulkKirimLine(line.key, { product_id: e.target.value })}>
+                      <option value="">— tanlang —</option>
+                      {products.map((p) => <option key={p.id} value={p.id}>{p.name} {p.brand ? `(${p.brand})` : ''}</option>)}
+                    </select>
+                  </div>
+                )}
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className="form-row">
+                    <label>Soni ({bulkLineUnit(line)}) *</label>
+                    <input required type="text" inputMode="decimal" value={line.quantity} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { quantity: e.target.value.replace(',', '.') })} />
+                  </div>
+                  <div className="form-row">
+                    <label>1 {bulkLineUnit(line)} tan narxi *</label>
+                    <input required type="number" value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { unit_cost: e.target.value })} />
+                  </div>
+                </div>
+                {line.quantity > 0 && line.unit_cost > 0 && (
+                  <div style={{ fontWeight: 700, fontSize: 13 }}>Ushbu qator: {money(Number(line.quantity) * Number(line.unit_cost))}</div>
+                )}
+              </div>
+            ))}
+
+            <button type="button" className="btn secondary" style={{ width: '100%', marginBottom: 10 }} onClick={addBulkKirimLine}>+ Yana mahsulot qo'shish</button>
+
+            <div style={{ fontWeight: 700, marginBottom: 14, fontSize: 15 }}>
+              Hujjat jami: {money(bulkKirimDocTotal())}
+            </div>
+
+            <div className="form-row">
+              <label>To'lov turi *</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className={`btn ${bulkPaymentMode === 'naqd' && !bulkMixedOpen ? '' : 'secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setBulkPaymentMode('naqd'); setBulkMixedOpen(false); }}
+                >💵 Naqd</button>
+                <button
+                  type="button"
+                  className={`btn ${bulkPaymentMode === 'karta' && !bulkMixedOpen ? '' : 'secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setBulkPaymentMode('karta'); setBulkMixedOpen(false); }}
+                >💳 Karta</button>
+                <button
+                  type="button"
+                  className={`btn ${bulkPaymentMode === 'nasiya' && !bulkMixedOpen ? '' : 'secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setBulkPaymentMode('nasiya'); setBulkMixedOpen(false); }}
+                >📒 Nasiya</button>
+              </div>
+              <button
+                type="button"
+                className="btn secondary"
+                style={{ width: '100%', marginTop: 8, ...(bulkMixedOpen ? { background: 'var(--accent)', color: '#fff' } : {}) }}
+                onClick={() => {
+                  if (!bulkMixedOpen) {
+                    const total = bulkKirimDocTotal();
+                    setBulkMixedNaqd(String(total));
+                    setBulkMixedKarta('0');
+                    setBulkMixedNasiya('0');
+                  }
+                  setBulkMixedOpen((v) => !v);
+                  setBulkPaymentMode('aralash');
+                }}
+              >🔀 Aralash to'lov (naqd + karta + nasiya)</button>
+
+              {bulkMixedOpen && (
+                <div className="card" style={{ marginTop: 8, background: 'var(--panel-light)' }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                      <label>💵 Naqd</label>
+                      <input type="number" value={bulkMixedNaqd} onFocus={(e) => e.target.select()} onChange={(e) => setBulkMixedNaqd(e.target.value)} />
+                    </div>
+                    <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                      <label>💳 Karta</label>
+                      <input type="number" value={bulkMixedKarta} onFocus={(e) => e.target.select()} onChange={(e) => setBulkMixedKarta(e.target.value)} />
+                    </div>
+                    <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                      <label>📒 Nasiya</label>
+                      <input type="number" value={bulkMixedNasiya} onFocus={(e) => e.target.select()} onChange={(e) => setBulkMixedNasiya(e.target.value)} />
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 12,
+                    color: Math.round((Number(bulkMixedNaqd) || 0) + (Number(bulkMixedKarta) || 0) + (Number(bulkMixedNasiya) || 0)) === Math.round(bulkKirimDocTotal()) ? 'var(--text-dim)' : 'var(--red)',
+                  }}>
+                    Jami: {money((Number(bulkMixedNaqd) || 0) + (Number(bulkMixedKarta) || 0) + (Number(bulkMixedNasiya) || 0))} / {money(bulkKirimDocTotal())}
+                    {Math.round((Number(bulkMixedNaqd) || 0) + (Number(bulkMixedKarta) || 0) + (Number(bulkMixedNasiya) || 0)) !== Math.round(bulkKirimDocTotal()) && ' — summalar mos kelmayapti'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+              <button type="button" className="btn secondary" style={{ flex: 1 }} onClick={() => setBulkKirimModal(false)}>Bekor qilish</button>
+              <button
+                className="btn"
+                style={{ flex: 1 }}
+                disabled={bulkMixedOpen && Math.round((Number(bulkMixedNaqd) || 0) + (Number(bulkMixedKarta) || 0) + (Number(bulkMixedNasiya) || 0)) !== Math.round(bulkKirimDocTotal())}
+              >Saqlash</button>
             </div>
           </form>
         </div>
