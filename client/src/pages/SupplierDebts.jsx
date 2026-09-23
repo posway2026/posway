@@ -17,7 +17,7 @@ const UNIT_OPTIONS = [
   { value: 'litr', label: 'Litr' },
 ];
 
-function emptyKirimLine(payment_type = 'naqd') {
+function emptyKirimLine() {
   return {
     key: Math.random().toString(36).slice(2),
     isNew: false,
@@ -38,7 +38,8 @@ function emptyKirimLine(payment_type = 'naqd') {
     new_product_whole_price: '',
     quantity: '',
     unit_cost: '',
-    payment_type,
+    // (2026-09-23) payment_type endi bu yerda emas — butun hujjat uchun
+    // BIR MARTA, pastda (docPaymentMode va h.k.) tanlanadi.
     note: '',
   };
 }
@@ -66,6 +67,14 @@ export default function SupplierDebts() {
   // mahsulotlarni avtomatik o'qib, pastdagi qatorlarga joylash.
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+  // (2026-09-23) To'lov turi endi har bir mahsulot-qatorida emas, BUTUN
+  // hujjat uchun BIR MARTA — Sotuv (kassa) sahifasidagi kabi naqd/karta/
+  // nasiya yoki ularning aralashmasi.
+  const [docPaymentMode, setDocPaymentMode] = useState('naqd');
+  const [docMixedOpen, setDocMixedOpen] = useState(false);
+  const [docMixedNaqd, setDocMixedNaqd] = useState('');
+  const [docMixedKarta, setDocMixedKarta] = useState('');
+  const [docMixedNasiya, setDocMixedNasiya] = useState('');
   const [editingEntry, setEditingEntry] = useState(null);
   const [editForm, setEditForm] = useState({ quantity: '', unit_cost: '', payment_type: 'naqd', note: '' });
   const [docView, setDocView] = useState(null);
@@ -137,7 +146,18 @@ export default function SupplierDebts() {
     setKirimLines([emptyKirimLine()]);
     setAiError('');
     setAiLoading(false);
+    setDocPaymentMode('naqd');
+    setDocMixedOpen(false);
+    setDocMixedNaqd('');
+    setDocMixedKarta('');
+    setDocMixedNasiya('');
     setKirimModal(true);
+  }
+
+  // (2026-09-23) Hujjat jamisi — to'lov taqsimotini shu summaga nisbatan
+  // tekshirish/avtomatik to'ldirish uchun.
+  function kirimDocTotal() {
+    return kirimLines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_cost || 0), 0);
   }
 
   function updateKirimLine(key, patch) {
@@ -206,9 +226,8 @@ export default function SupplierDebts() {
         // shuni AI natijalariga almashtiramiz; aks holda oxiriga qo'shamiz.
         const isSingleEmpty = lines.length === 1 && !lines[0].new_product_name && !lines[0].product_id && !lines[0].quantity;
         const base = isSingleEmpty ? [] : lines;
-        const lastPaymentType = lines[lines.length - 1]?.payment_type || 'naqd';
         const newLines = items.map((it) => ({
-          ...emptyKirimLine(lastPaymentType),
+          ...emptyKirimLine(),
           isNew: true,
           new_product_name: it.name || '',
           new_product_brand: it.brand || '',
@@ -226,7 +245,7 @@ export default function SupplierDebts() {
   }
 
   function addKirimLine() {
-    setKirimLines((lines) => [...lines, emptyKirimLine(lines[lines.length - 1]?.payment_type || 'naqd')]);
+    setKirimLines((lines) => [...lines, emptyKirimLine()]);
   }
 
   function removeKirimLine(key) {
@@ -260,10 +279,33 @@ export default function SupplierDebts() {
       }
     }
 
+    // (2026-09-23) To'lov taqsimoti — butun hujjat uchun bir marta.
+    const total = kirimDocTotal();
+    let payment;
+    if (docPaymentMode === 'aralash') {
+      payment = {
+        naqd: Number(docMixedNaqd) || 0,
+        karta: Number(docMixedKarta) || 0,
+        nasiya: Number(docMixedNasiya) || 0,
+      };
+      const sum = payment.naqd + payment.karta + payment.nasiya;
+      if (Math.round(sum) !== Math.round(total)) {
+        alert(`To'lov summalari (${money(sum)}) hujjat jamisiga (${money(total)}) teng emas`);
+        return;
+      }
+    } else {
+      payment = {
+        naqd: docPaymentMode === 'naqd' ? total : 0,
+        karta: docPaymentMode === 'karta' ? total : 0,
+        nasiya: docPaymentMode === 'nasiya' ? total : 0,
+      };
+    }
+
     try {
       await api.addSupplierKirim(detail.supplier_name, {
         date: docDate,
         note: docNote,
+        payment,
         items: kirimLines.map((line) => ({
           product_id: line.isNew ? null : line.product_id || null,
           new_product_name: line.isNew ? line.new_product_name : null,
@@ -279,7 +321,6 @@ export default function SupplierDebts() {
           new_product_whole_price: line.isNew && line.new_product_dual_mode ? Number(line.new_product_whole_price || 0) : undefined,
           quantity: +line.quantity,
           unit_cost: +line.unit_cost,
-          payment_type: line.payment_type,
           note: line.note,
         })),
       });
@@ -321,6 +362,7 @@ export default function SupplierDebts() {
         <div>Ta'minotchi: <b>${doc.supplier_name}</b></div>
         <div>Sana: ${new Date(doc.date).toLocaleDateString('uz-UZ')}</div>
         ${doc.note ? `<div>Izoh: ${doc.note}</div>` : ''}
+        ${doc.payment ? `<div>To'lov: ${[doc.payment.naqd > 0 ? `Naqd ${money(doc.payment.naqd)}` : '', doc.payment.karta > 0 ? `Karta ${money(doc.payment.karta)}` : '', doc.payment.nasiya > 0 ? `Nasiya ${money(doc.payment.nasiya)}` : ''].filter(Boolean).join(', ')}</div>` : ''}
         <table>
           <thead><tr><th>Mahsulot</th><th>Soni</th><th>Narx</th><th>Summa</th><th>To'lov</th></tr></thead>
           <tbody>${rows}</tbody>
@@ -580,7 +622,7 @@ export default function SupplierDebts() {
         // forma ("yuk kirim qilish"); aynan shu yerda tashqariga bosilib
         // hammasi yo'qolib qolishi eng ko'p shikoyat qilingan holat edi.
         <div className="modal-overlay">
-          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleAddKirim} style={{ maxWidth: 760 }}>
+          <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handleAddKirim} style={{ maxWidth: 940 }}>
             <h3 style={{ marginTop: 0 }}>{detail.supplier_name} — yangi kirim hujjati</h3>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10, marginBottom: 8 }}>
@@ -611,9 +653,20 @@ export default function SupplierDebts() {
             </div>
 
             {kirimLines.map((line, idx) => (
-              <div key={line.key} style={{ border: '1px solid var(--border, #333)', borderRadius: 8, padding: 10, marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <b style={{ fontSize: 13 }}>{idx + 1}-mahsulot</b>
+              // (2026-09-23) Har bir mahsulot alohida, aniq ko'rinishli karta
+              // sifatida — chapda katta, qalin raqam bilan ("1", "2", "3"...),
+              // shunda uzun ro'yxatda qaysi mahsulot nechinchi ekani darrov
+              // ko'rinib turadi.
+              <div key={line.key} style={{ border: '2px solid var(--border, #333)', borderLeft: '5px solid var(--accent, #4a7dff)', borderRadius: 10, padding: 16, marginBottom: 16, background: 'var(--panel)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 30, height: 30, borderRadius: '50%', background: 'var(--accent, #4a7dff)',
+                      color: '#fff', fontWeight: 700, fontSize: 15, flexShrink: 0,
+                    }}>{idx + 1}</span>
+                    <b style={{ fontSize: 16 }}>{idx + 1}-mahsulot</b>
+                  </div>
                   {kirimLines.length > 1 && (
                     <button type="button" className="btn danger" style={{ fontSize: 11, padding: '2px 8px' }} onClick={() => removeKirimLine(line.key)}>O'chirish</button>
                   )}
@@ -748,14 +801,6 @@ export default function SupplierDebts() {
                     <input required type="number" value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { unit_cost: e.target.value })} />
                   </div>
                 </div>
-                <div className="form-row">
-                  <label>To'lov turi *</label>
-                  <select value={line.payment_type} onChange={(e) => updateKirimLine(line.key, { payment_type: e.target.value })}>
-                    <option value="naqd">💵 Naqd (kassadan ayiriladi)</option>
-                    <option value="karta">💳 Karta (kassadan ayiriladi)</option>
-                    <option value="nasiya">📒 Nasiya (qarz sifatida yoziladi)</option>
-                  </select>
-                </div>
                 {line.quantity > 0 && line.unit_cost > 0 && (
                   <div style={{ fontWeight: 700, fontSize: 13 }}>Ushbu qator: {money(Number(line.quantity) * Number(line.unit_cost))}</div>
                 )}
@@ -764,12 +809,85 @@ export default function SupplierDebts() {
 
             <button type="button" className="btn secondary" style={{ width: '100%', marginBottom: 10 }} onClick={addKirimLine}>+ Yana mahsulot qo'shish</button>
 
-            <div style={{ fontWeight: 700, marginBottom: 10, fontSize: 15 }}>
-              Hujjat jami: {money(kirimLines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unit_cost || 0), 0))}
+            <div style={{ fontWeight: 700, marginBottom: 14, fontSize: 15 }}>
+              Hujjat jami: {money(kirimDocTotal())}
             </div>
-            <div style={{ display: 'flex', gap: 10 }}>
+
+            {/* (2026-09-23) To'lov turi endi bitta joyda, ro'yxat oxirida —
+                Sotuv (kassa) sahifasidagi kabi naqd/karta/nasiya yoki
+                ularning aralashmasi butun hujjat uchun bir marta tanlanadi. */}
+            <div className="form-row">
+              <label>To'lov turi *</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className={`btn ${docPaymentMode === 'naqd' && !docMixedOpen ? '' : 'secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setDocPaymentMode('naqd'); setDocMixedOpen(false); }}
+                >💵 Naqd</button>
+                <button
+                  type="button"
+                  className={`btn ${docPaymentMode === 'karta' && !docMixedOpen ? '' : 'secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setDocPaymentMode('karta'); setDocMixedOpen(false); }}
+                >💳 Karta</button>
+                <button
+                  type="button"
+                  className={`btn ${docPaymentMode === 'nasiya' && !docMixedOpen ? '' : 'secondary'}`}
+                  style={{ flex: 1 }}
+                  onClick={() => { setDocPaymentMode('nasiya'); setDocMixedOpen(false); }}
+                >📒 Nasiya</button>
+              </div>
+              <button
+                type="button"
+                className={`btn secondary`}
+                style={{ width: '100%', marginTop: 8, ...(docMixedOpen ? { background: 'var(--accent)', color: '#fff' } : {}) }}
+                onClick={() => {
+                  if (!docMixedOpen) {
+                    const total = kirimDocTotal();
+                    setDocMixedNaqd(String(total));
+                    setDocMixedKarta('0');
+                    setDocMixedNasiya('0');
+                  }
+                  setDocMixedOpen((v) => !v);
+                  setDocPaymentMode('aralash');
+                }}
+              >🔀 Aralash to'lov (naqd + karta + nasiya)</button>
+
+              {docMixedOpen && (
+                <div className="card" style={{ marginTop: 8, background: 'var(--panel-light)' }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                      <label>💵 Naqd</label>
+                      <input type="number" value={docMixedNaqd} onFocus={(e) => e.target.select()} onChange={(e) => setDocMixedNaqd(e.target.value)} />
+                    </div>
+                    <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                      <label>💳 Karta</label>
+                      <input type="number" value={docMixedKarta} onFocus={(e) => e.target.select()} onChange={(e) => setDocMixedKarta(e.target.value)} />
+                    </div>
+                    <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
+                      <label>📒 Nasiya</label>
+                      <input type="number" value={docMixedNasiya} onFocus={(e) => e.target.select()} onChange={(e) => setDocMixedNasiya(e.target.value)} />
+                    </div>
+                  </div>
+                  <div style={{
+                    fontSize: 12,
+                    color: Math.round((Number(docMixedNaqd) || 0) + (Number(docMixedKarta) || 0) + (Number(docMixedNasiya) || 0)) === Math.round(kirimDocTotal()) ? 'var(--text-dim)' : 'var(--red)',
+                  }}>
+                    Jami: {money((Number(docMixedNaqd) || 0) + (Number(docMixedKarta) || 0) + (Number(docMixedNasiya) || 0))} / {money(kirimDocTotal())}
+                    {Math.round((Number(docMixedNaqd) || 0) + (Number(docMixedKarta) || 0) + (Number(docMixedNasiya) || 0)) !== Math.round(kirimDocTotal()) && ' — summalar mos kelmayapti'}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
               <button type="button" className="btn secondary" style={{ flex: 1 }} onClick={() => setKirimModal(false)}>Bekor qilish</button>
-              <button className="btn" style={{ flex: 1 }}>Saqlash</button>
+              <button
+                className="btn"
+                style={{ flex: 1 }}
+                disabled={docMixedOpen && Math.round((Number(docMixedNaqd) || 0) + (Number(docMixedKarta) || 0) + (Number(docMixedNasiya) || 0)) !== Math.round(kirimDocTotal())}
+              >Saqlash</button>
             </div>
           </form>
         </div>
@@ -790,6 +908,16 @@ export default function SupplierDebts() {
               </div>
             </div>
             {docView.note && <div style={{ color: 'var(--text-dim)', fontSize: 13, marginBottom: 8 }}>Izoh: {docView.note}</div>}
+            {/* (2026-09-23) Hujjat darajasidagi to'lov taqsimoti — endi
+                to'lov turi butun hujjat uchun bir marta tanlangani uchun,
+                shu yerda yig'ma holda ko'rsatamiz. */}
+            {docView.payment && (
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 13, marginBottom: 10 }}>
+                {docView.payment.naqd > 0 && <span>💵 Naqd: <b>{money(docView.payment.naqd)}</b></span>}
+                {docView.payment.karta > 0 && <span>💳 Karta: <b>{money(docView.payment.karta)}</b></span>}
+                {docView.payment.nasiya > 0 && <span>📒 Nasiya: <b>{money(docView.payment.nasiya)}</b></span>}
+              </div>
+            )}
             <table>
               <thead><tr><th>Mahsulot</th><th>Soni</th><th>Narx</th><th>Summa</th><th>Turi</th><th></th></tr></thead>
               <tbody>
