@@ -133,12 +133,13 @@ router.get('/kirim-document/:id', authRequired, (req, res) => {
 // bo'lgan (lekin saqlanmagan) holatda qolib, keyingi so'rovlarda
 // hisobni chalkashtirib yuborishi mumkin edi.
 function validateKirimItem(item) {
-  const { product_id, new_product_name, quantity, unit_cost, payment_type } = item;
+  const { product_id, new_product_name, quantity, unit_cost } = item;
   const qty = Number(quantity) || 0;
   const cost = Number(unit_cost) || 0;
   if (qty <= 0) return "Miqdorni to'g'ri kiriting";
   if (cost <= 0) return "Tan narxni to'g'ri kiriting";
-  if (!['naqd', 'karta', 'nasiya'].includes(payment_type)) return "To'lov turini tanlang";
+  // (2026-09-23) To'lov turi endi har bir qatorda emas, BUTUN hujjat
+  // darajasida (pastdagi validatePaymentSplit orqali) tekshiriladi.
   if (!product_id && !new_product_name) return "Mahsulotni tanlang yoki yangi nom kiriting";
   // (3/c-fix3) Yangi mahsulot ikki xil rejimda yaratilayotgan bo'lsa, shu
   // yerda OLDINDAN tekshiramiz (Mahsulotlar sahifasidagi kabi) — bu barcha
@@ -156,6 +157,25 @@ function validateKirimItem(item) {
       whole_label: item.new_product_whole_label,
     });
     if (unitFields.error) return `"${new_product_name}" uchun: ${unitFields.error}`;
+  }
+  return null;
+}
+
+// (2026-09-23) Hujjat darajasidagi to'lov taqsimoti — endi foydalanuvchi
+// har bir mahsulot-qatorida emas, BUTUN hujjat oxirida BIR MARTA
+// naqd/karta/nasiya (yoki ularning aralashmasi, summalar bo'yicha)
+// tanlaydi. naqd+karta+nasiya yig'indisi hujjat umumiy summasiga (kichik
+// yaxlitlash xatosidan tashqari) teng bo'lishi kerak.
+function validatePaymentSplit(payment, total) {
+  if (!payment || typeof payment !== 'object') return "To'lov turini tanlang";
+  const naqd = Number(payment.naqd) || 0;
+  const karta = Number(payment.karta) || 0;
+  const nasiya = Number(payment.nasiya) || 0;
+  if (naqd < 0 || karta < 0 || nasiya < 0) return "To'lov summalari manfiy bo'lishi mumkin emas";
+  const sum = naqd + karta + nasiya;
+  if (sum <= 0) return "To'lov summasini kiriting";
+  if (Math.abs(sum - total) > 1) {
+    return `To'lov summalari (${Math.round(sum)}) hujjat jamisiga (${Math.round(total)}) teng emas`;
   }
   return null;
 }
@@ -300,6 +320,53 @@ router.post('/:supplier_name/kirim', authRequired, (req, res) => {
     }
   }
 
+  // (2026-09-23) To'lov turi endi har bir mahsulot-qatoriga emas, BUTUN
+  // hujjatga BIR MARTA (naqd/karta/nasiya yoki ularning aralashmasi
+  // sifatida summalar bo'yicha) tanlanadi. Ichki hisob-kitob (har bir
+  // supplier_debts yozuvi, kassa harakati, qarz) baribir ESKICHA — ITEM
+  // darajasida — yuritiladi (hisobotlar/tahrirlash/o'chirish o'zgarmasin
+  // uchun), shuning uchun har bir mahsulot-qatori hujjat umumiy to'lov
+  // taqsimotiga qarab kerak bo'lsa 2 ga bo'linib, mos payment_type bilan
+  // alohida yozuv sifatida saqlanadi (masalan 12 mln.dan 8 mln. naqd bo'lib,
+  // chegaraga to'g'ri kelib qolgan bitta mahsulot naqd+nasiya ga bo'linadi).
+  const total = items.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unit_cost) || 0), 0);
+  const payment = req.body.payment || {};
+  const paymentErr = validatePaymentSplit(payment, total);
+  if (paymentErr) return res.status(400).json({ error: paymentErr });
+
+  const buckets = [
+    { type: 'naqd', remaining: Number(payment.naqd) || 0 },
+    { type: 'karta', remaining: Number(payment.karta) || 0 },
+    { type: 'nasiya', remaining: Number(payment.nasiya) || 0 },
+  ].filter((b) => b.remaining > 0);
+  // Yaxlitlash farqini (masalan 1 so'm) oxirgi "chelak"ka qo'shib yuboramiz
+  // — shunda taqsimlash paytida hech narsa taqsimlanmay qolib ketmaydi.
+  const bucketsSum = buckets.reduce((s, b) => s + b.remaining, 0);
+  if (buckets.length > 0) buckets[buckets.length - 1].remaining += total - bucketsSum;
+
+  let bucketIdx = 0;
+  function takeFromBuckets(amount) {
+    const pieces = [];
+    let remaining = amount;
+    while (remaining > 0.005 && bucketIdx < buckets.length) {
+      const b = buckets[bucketIdx];
+      const take = Math.min(remaining, b.remaining);
+      if (take > 0) {
+        pieces.push({ type: b.type, amount: take });
+        b.remaining -= take;
+        remaining -= take;
+      }
+      if (b.remaining <= 0.005) bucketIdx += 1;
+    }
+    // Ehtiyot chorasi — yaxlitlash sabab bir tiyin taqsimlanmay qolsa, oxirgi
+    // ishlatilgan turga qo'shib yuboramiz (hech qachon yo'qolib ketmasin).
+    if (remaining > 0.005) {
+      const fallbackType = pieces.length > 0 ? pieces[pieces.length - 1].type : (buckets[buckets.length - 1]?.type || 'nasiya');
+      pieces.push({ type: fallbackType, amount: remaining });
+    }
+    return pieces;
+  }
+
   // (14) Har doim BITTA kirim hujjati yaratiladi (bitta mahsulot bo'lsa
   // ham) — shunda barcha kirimlar bir xil tarzda guruhlanadi va chek
   // qilib chiqarish mumkin bo'ladi.
@@ -308,9 +375,20 @@ router.post('/:supplier_name/kirim', authRequired, (req, res) => {
 
   const results = [];
   for (const item of items) {
-    const result = processKirimItem(data, { supplier_name, item, now, performed_by, document_id: documentId });
-    if (result.error) return res.status(400).json({ error: result.error });
-    results.push(result);
+    const qty = Number(item.quantity) || 0;
+    const cost = Number(item.unit_cost) || 0;
+    const itemTotal = qty * cost;
+    const pieces = takeFromBuckets(itemTotal);
+
+    let resolvedProductId = item.product_id || null;
+    for (const piece of pieces) {
+      const pieceQty = qty * (piece.amount / itemTotal);
+      const pieceItem = { ...item, product_id: resolvedProductId, quantity: pieceQty, payment_type: piece.type };
+      const result = processKirimItem(data, { supplier_name, item: pieceItem, now, performed_by, document_id: documentId });
+      if (result.error) return res.status(400).json({ error: result.error });
+      results.push(result);
+      if (!item.product_id && !resolvedProductId) resolvedProductId = result.product.id;
+    }
   }
 
   data.kirim_documents.push({
@@ -318,6 +396,13 @@ router.post('/:supplier_name/kirim', authRequired, (req, res) => {
     supplier_name,
     date: req.body.date ? new Date(req.body.date).toISOString() : now,
     note: req.body.note || '',
+    // (2026-09-23) Hujjat darajasidagi to'lov taqsimoti — chek/hujjat
+    // ko'rinishida "Jami qanday to'landi" qatorini ko'rsatish uchun.
+    payment: {
+      naqd: Number(payment.naqd) || 0,
+      karta: Number(payment.karta) || 0,
+      nasiya: Number(payment.nasiya) || 0,
+    },
     created_by: performed_by,
     created_at: now,
   });
