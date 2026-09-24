@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { printReceipt, downloadReceiptPdf, buildSaleReceiptData } from '../lib/receipt.js';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -340,20 +341,18 @@ export default function Reports() {
                       <div style={{ display: 'flex', gap: 8 }}>
                         <div className="form-row" style={{ marginBottom: 0, flex: 1 }}>
                           <label>💵 Naqd</label>
-                          <input
-                            type="number"
+                          <MoneyInput
                             value={refundInput.naqd}
                             onFocus={(e) => e.target.select()}
-                            onChange={(e) => setRefundInput({ ...refundInput, naqd: e.target.value })}
+                            onChange={(v) => setRefundInput({ ...refundInput, naqd: v })}
                           />
                         </div>
                         <div className="form-row" style={{ marginBottom: 0, flex: 1 }}>
                           <label>💳 Karta</label>
-                          <input
-                            type="number"
+                          <MoneyInput
                             value={refundInput.karta}
                             onFocus={(e) => e.target.select()}
-                            onChange={(e) => setRefundInput({ ...refundInput, karta: e.target.value })}
+                            onChange={(v) => setRefundInput({ ...refundInput, karta: v })}
                           />
                         </div>
                       </div>
