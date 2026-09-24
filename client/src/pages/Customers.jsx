@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { printReceipt, downloadReceiptPdf, buildSaleReceiptData } from '../lib/receipt.js';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -336,7 +337,7 @@ export default function Customers() {
             <div className="form-row">
               <label>To'lov summasi</label>
               <div style={{ display: 'flex', gap: 8 }}>
-                <input required type="number" style={{ flex: 1 }} value={payAmount} onFocus={(e) => e.target.select()} onChange={(e) => setPayAmount(e.target.value)} />
+                <MoneyInput required style={{ flex: 1 }} value={payAmount} onFocus={(e) => e.target.select()} onChange={(v) => setPayAmount(v)} />
                 <button type="button" className="btn secondary" onClick={() => setPayAmount(String(payModal.current_debt))}>Jami (to'liq)</button>
               </div>
             </div>
@@ -364,7 +365,7 @@ export default function Customers() {
             </div>
             <div className="form-row">
               <label>Qarz summasi *</label>
-              <input required type="number" value={oldDebtAmount} onFocus={(e) => e.target.select()} onChange={(e) => setOldDebtAmount(e.target.value)} />
+              <MoneyInput required value={oldDebtAmount} onFocus={(e) => e.target.select()} onChange={(v) => setOldDebtAmount(v)} />
             </div>
             <div className="form-row">
               <label>Qarz qachondan boshlangan?</label>
@@ -486,20 +487,18 @@ export default function Customers() {
                     <div style={{ display: 'flex', gap: 8 }}>
                       <div className="form-row" style={{ marginBottom: 0, flex: 1 }}>
                         <label>💵 Naqd</label>
-                        <input
-                          type="number"
+                        <MoneyInput
                           value={closeDebtRefund.naqd}
                           onFocus={(e) => e.target.select()}
-                          onChange={(e) => setCloseDebtRefund({ ...closeDebtRefund, naqd: e.target.value })}
+                          onChange={(v) => setCloseDebtRefund({ ...closeDebtRefund, naqd: v })}
                         />
                       </div>
                       <div className="form-row" style={{ marginBottom: 0, flex: 1 }}>
                         <label>💳 Karta</label>
-                        <input
-                          type="number"
+                        <MoneyInput
                           value={closeDebtRefund.karta}
                           onFocus={(e) => e.target.select()}
-                          onChange={(e) => setCloseDebtRefund({ ...closeDebtRefund, karta: e.target.value })}
+                          onChange={(v) => setCloseDebtRefund({ ...closeDebtRefund, karta: v })}
                         />
                       </div>
                     </div>
