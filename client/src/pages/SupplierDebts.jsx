@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { downloadReceiptPdf, buildKirimReceiptData } from '../lib/receipt.js';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -498,7 +499,7 @@ export default function SupplierDebts() {
           <form className="modal" onClick={(e) => e.stopPropagation()} onSubmit={handlePay}>
             <h3 style={{ marginTop: 0 }}>{payModal.supplier_name} — to'lov qilish</h3>
             <div className="form-row"><label>Qoldiq qarz: {money(payModal.balance)}</label></div>
-            <div className="form-row"><label>To'lov summasi</label><input required type="number" value={payAmount} onFocus={(e) => e.target.select()} onChange={(e) => setPayAmount(e.target.value)} /></div>
+            <div className="form-row"><label>To'lov summasi</label><MoneyInput required value={payAmount} onFocus={(e) => e.target.select()} onChange={(v) => setPayAmount(v)} /></div>
             <div className="form-row">
               <label>Qanday to'landi?</label>
               <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)}>
@@ -527,7 +528,7 @@ export default function SupplierDebts() {
             </div>
             <div className="form-row">
               <label>Qarz summasi *</label>
-              <input required type="number" value={oldDebtAmount} onFocus={(e) => e.target.select()} onChange={(e) => setOldDebtAmount(e.target.value)} />
+              <MoneyInput required value={oldDebtAmount} onFocus={(e) => e.target.select()} onChange={(v) => setOldDebtAmount(v)} />
             </div>
             <div className="form-row">
               <label>Qarz qachondan boshlangan?</label>
@@ -765,7 +766,7 @@ export default function SupplierDebts() {
                           </div>
                           <div className="form-row">
                             <label>1 {line.new_product_whole_label || 'butun'} narxi *</label>
-                            <input required type="number" value={line.new_product_whole_price} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_whole_price: e.target.value })} />
+                            <MoneyInput required value={line.new_product_whole_price} onFocus={(e) => e.target.select()} onChange={(v) => updateKirimLine(line.key, { new_product_whole_price: v })} />
                           </div>
                         </div>
                       </div>
@@ -773,7 +774,7 @@ export default function SupplierDebts() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div className="form-row">
                         <label>{line.new_product_dual_mode ? `1 ${line.new_product_unit} narxi (o'lchovga bo'lib sotilganda) *` : 'Sotish narxi *'}</label>
-                        <input required type="number" value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { new_product_sale_price: e.target.value })} />
+                        <MoneyInput required value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(v) => updateKirimLine(line.key, { new_product_sale_price: v })} />
                       </div>
                       <div className="form-row">
                         <label>Minimal qoldiq</label>
@@ -798,7 +799,7 @@ export default function SupplierDebts() {
                   </div>
                   <div className="form-row">
                     <label>1 {lineUnit(line)} tan narxi *</label>
-                    <input required type="number" value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => updateKirimLine(line.key, { unit_cost: e.target.value })} />
+                    <MoneyInput required value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(v) => updateKirimLine(line.key, { unit_cost: v })} />
                   </div>
                 </div>
                 {line.quantity > 0 && line.unit_cost > 0 && (
@@ -859,15 +860,15 @@ export default function SupplierDebts() {
                   <div style={{ display: 'flex', gap: 8 }}>
                     <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                       <label>💵 Naqd</label>
-                      <input type="number" value={docMixedNaqd} onFocus={(e) => e.target.select()} onChange={(e) => setDocMixedNaqd(e.target.value)} />
+                      <MoneyInput value={docMixedNaqd} onFocus={(e) => e.target.select()} onChange={(v) => setDocMixedNaqd(v)} />
                     </div>
                     <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                       <label>💳 Karta</label>
-                      <input type="number" value={docMixedKarta} onFocus={(e) => e.target.select()} onChange={(e) => setDocMixedKarta(e.target.value)} />
+                      <MoneyInput value={docMixedKarta} onFocus={(e) => e.target.select()} onChange={(v) => setDocMixedKarta(v)} />
                     </div>
                     <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                       <label>📒 Nasiya</label>
-                      <input type="number" value={docMixedNasiya} onFocus={(e) => e.target.select()} onChange={(e) => setDocMixedNasiya(e.target.value)} />
+                      <MoneyInput value={docMixedNasiya} onFocus={(e) => e.target.select()} onChange={(v) => setDocMixedNasiya(v)} />
                     </div>
                   </div>
                   <div style={{
@@ -958,7 +959,7 @@ export default function SupplierDebts() {
                 </div>
                 <div className="form-row">
                   <label>Tan narx (dona uchun)</label>
-                  <input required type="number" value={editForm.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => setEditForm({ ...editForm, unit_cost: e.target.value })} />
+                  <MoneyInput required value={editForm.unit_cost} onFocus={(e) => e.target.select()} onChange={(v) => setEditForm({ ...editForm, unit_cost: v })} />
                 </div>
               </>
             ) : (
