@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
 import { printBarcodeLabel, downloadBarcodeLabelPdf, buildBarcodeLabelData } from '../lib/receipt.js';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 // (3/c) O'lchov birliklari — "dona" standart. Ikki xil rejim (dual_mode)
 // yoqilganda mahsulot HAM "butun" holda (whole_label/whole_size/whole_price),
@@ -750,7 +751,7 @@ export default function Products() {
                   </div>
                   <div className="form-row">
                     <label>1 {form.whole_label || 'butun'} narxi *</label>
-                    <input required type="number" value={form.whole_price} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, whole_price: e.target.value })} />
+                    <MoneyInput required value={form.whole_price} onFocus={(e) => e.target.select()} onChange={(v) => setForm({ ...form, whole_price: v })} />
                   </div>
                 </div>
               </div>
@@ -769,11 +770,11 @@ export default function Products() {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
               <div className="form-row">
                 <label>Tan narx</label>
-                <input type="number" value={form.costPrice ?? form.purchase_price ?? 0} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, costPrice: +e.target.value, purchase_price: +e.target.value })} />
+                <MoneyInput value={form.costPrice ?? form.purchase_price ?? 0} onFocus={(e) => e.target.select()} onChange={(v) => setForm({ ...form, costPrice: v, purchase_price: v })} />
               </div>
               <div className="form-row">
                 <label>{form.dual_mode ? `1 ${form.unit} narxi (o'lchovga bo'lib sotilganda) *` : 'Sotish narxi *'}</label>
-                <input required type="number" value={form.sale_price} onFocus={(e) => e.target.select()} onChange={(e) => setForm({ ...form, sale_price: +e.target.value })} />
+                <MoneyInput required value={form.sale_price} onFocus={(e) => e.target.select()} onChange={(v) => setForm({ ...form, sale_price: v })} />
               </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
@@ -826,7 +827,7 @@ export default function Products() {
               </div>
               <div className="form-row">
                 <label>1 {kirimProduct.unit || 'dona'} tan narxi *</label>
-                <input required type="number" value={kirimForm.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => setKirimForm({ ...kirimForm, unit_cost: e.target.value })} />
+                <MoneyInput required value={kirimForm.unit_cost} onFocus={(e) => e.target.select()} onChange={(v) => setKirimForm({ ...kirimForm, unit_cost: v })} />
               </div>
             </div>
             <div className="form-row">
@@ -989,7 +990,7 @@ export default function Products() {
                           </div>
                           <div className="form-row">
                             <label>1 {line.new_product_whole_label || 'butun'} narxi *</label>
-                            <input required type="number" value={line.new_product_whole_price} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { new_product_whole_price: e.target.value })} />
+                            <MoneyInput required value={line.new_product_whole_price} onFocus={(e) => e.target.select()} onChange={(v) => updateBulkKirimLine(line.key, { new_product_whole_price: v })} />
                           </div>
                         </div>
                       </div>
@@ -997,7 +998,7 @@ export default function Products() {
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                       <div className="form-row">
                         <label>{line.new_product_dual_mode ? `1 ${line.new_product_unit} narxi (o'lchovga bo'lib sotilganda) *` : 'Sotish narxi *'}</label>
-                        <input required type="number" value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { new_product_sale_price: e.target.value })} />
+                        <MoneyInput required value={line.new_product_sale_price} onFocus={(e) => e.target.select()} onChange={(v) => updateBulkKirimLine(line.key, { new_product_sale_price: v })} />
                       </div>
                       <div className="form-row">
                         <label>Minimal qoldiq</label>
@@ -1022,7 +1023,7 @@ export default function Products() {
                   </div>
                   <div className="form-row">
                     <label>1 {bulkLineUnit(line)} tan narxi *</label>
-                    <input required type="number" value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(e) => updateBulkKirimLine(line.key, { unit_cost: e.target.value })} />
+                    <MoneyInput required value={line.unit_cost} onFocus={(e) => e.target.select()} onChange={(v) => updateBulkKirimLine(line.key, { unit_cost: v })} />
                   </div>
                 </div>
                 {line.quantity > 0 && line.unit_cost > 0 && (
@@ -1080,15 +1081,15 @@ export default function Products() {
                   <div style={{ display: 'flex', gap: 8 }}>
                     <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                       <label>💵 Naqd</label>
-                      <input type="number" value={bulkMixedNaqd} onFocus={(e) => e.target.select()} onChange={(e) => setBulkMixedNaqd(e.target.value)} />
+                      <MoneyInput value={bulkMixedNaqd} onFocus={(e) => e.target.select()} onChange={(v) => setBulkMixedNaqd(v)} />
                     </div>
                     <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                       <label>💳 Karta</label>
-                      <input type="number" value={bulkMixedKarta} onFocus={(e) => e.target.select()} onChange={(e) => setBulkMixedKarta(e.target.value)} />
+                      <MoneyInput value={bulkMixedKarta} onFocus={(e) => e.target.select()} onChange={(v) => setBulkMixedKarta(v)} />
                     </div>
                     <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                       <label>📒 Nasiya</label>
-                      <input type="number" value={bulkMixedNasiya} onFocus={(e) => e.target.select()} onChange={(e) => setBulkMixedNasiya(e.target.value)} />
+                      <MoneyInput value={bulkMixedNasiya} onFocus={(e) => e.target.select()} onChange={(v) => setBulkMixedNasiya(v)} />
                     </div>
                   </div>
                   <div style={{
