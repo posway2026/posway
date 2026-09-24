@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.js';
 import { printReceipt, downloadReceiptPdf, buildSaleReceiptData } from '../lib/receipt.js';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -741,13 +742,12 @@ export default function Pos() {
                   )}
 
                   {isEditingPrice ? (
-                    <input
-                      type="number"
+                    <MoneyInput
                       autoFocus
                       style={{ width: 90 }}
                       defaultValue={it.unit_price}
                       onFocus={(e) => e.target.select()}
-                      onBlur={(e) => { updateItemPrice(it.line_id, e.target.value); setEditingField(null); }}
+                      onBlur={(digits) => { updateItemPrice(it.line_id, digits); setEditingField(null); }}
                       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
                     />
                   ) : isEditingWarranty ? (
@@ -826,13 +826,12 @@ export default function Pos() {
                 <option value="fixed">Summa</option>
               </select>
               {activeCart.discountType !== 'none' && (
-                <input
-                  type="number"
+                <MoneyInput
                   style={{ flex: 1, minWidth: 0 }}
                   placeholder={activeCart.discountType === 'percent' ? 'Masalan: 10' : "Masalan: 20000"}
                   value={activeCart.discountValue}
                   onFocus={(e) => e.target.select()}
-                  onChange={(e) => updateActiveCart({ discountValue: e.target.value })}
+                  onChange={(v) => updateActiveCart({ discountValue: v })}
                 />
               )}
             </div>
@@ -945,24 +944,20 @@ export default function Pos() {
                 <div style={{ display: 'flex', gap: 8 }}>
                   <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                     <label>💵 Naqd</label>
-                    <input
-                      type="number"
+                    <MoneyInput
                       value={activeCart.mixedNaqd}
                       onFocus={(e) => e.target.select()}
-                      onChange={(e) => {
-                        const v = e.target.value;
+                      onChange={(v) => {
                         updateActiveCart({ mixedNaqd: v, mixedKarta: String(Math.max(0, total - (Number(v) || 0))) });
                       }}
                     />
                   </div>
                   <div className="form-row" style={{ flex: 1, marginBottom: 8 }}>
                     <label>💳 Karta</label>
-                    <input
-                      type="number"
+                    <MoneyInput
                       value={activeCart.mixedKarta}
                       onFocus={(e) => e.target.select()}
-                      onChange={(e) => {
-                        const v = e.target.value;
+                      onChange={(v) => {
                         updateActiveCart({ mixedKarta: v, mixedNaqd: String(Math.max(0, total - (Number(v) || 0))) });
                       }}
                     />
@@ -989,20 +984,18 @@ export default function Pos() {
           <div className="form-row" style={{ marginTop: 12 }}>
             <label>Qarzga sotish — hozir to'langan summa</label>
             <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="number"
+              <MoneyInput
                 placeholder="💵 Naqd"
                 value={activeCart.debtPaidNaqd}
                 onFocus={(e) => e.target.select()}
-                onChange={(e) => updateActiveCart({ debtPaidNaqd: e.target.value })}
+                onChange={(v) => updateActiveCart({ debtPaidNaqd: v })}
                 style={{ flex: 1 }}
               />
-              <input
-                type="number"
+              <MoneyInput
                 placeholder="💳 Karta"
                 value={activeCart.debtPaidKarta}
                 onFocus={(e) => e.target.select()}
-                onChange={(e) => updateActiveCart({ debtPaidKarta: e.target.value })}
+                onChange={(v) => updateActiveCart({ debtPaidKarta: v })}
                 style={{ flex: 1 }}
               />
             </div>
