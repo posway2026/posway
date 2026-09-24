@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 function money(n) {
   return Math.round(Number(n || 0)).toLocaleString('uz-UZ') + " so'm";
@@ -106,7 +107,7 @@ export default function CashClose() {
 
           <div className="form-row">
             <label>Jismonan sanalgan naqt summasi *</label>
-            <input required type="number" value={actualNaqd} onFocus={(e) => e.target.select()} onChange={(e) => setActualNaqd(e.target.value)} />
+            <MoneyInput required value={actualNaqd} onFocus={(e) => e.target.select()} onChange={(v) => setActualNaqd(v)} />
           </div>
 
           {difference !== null && (
