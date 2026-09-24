@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useAuth } from '../AuthContext.jsx';
+import MoneyInput from '../components/MoneyInput.jsx';
 
 const categories = [
   'Xodim maoshi/pul olish',
@@ -135,12 +136,11 @@ export default function CashMovements() {
             </div>
             <div className="form-row">
               <label>Miqdor</label>
-              <input
-                type="number"
+              <MoneyInput
                 required
                 value={form.amount}
                 onFocus={(e) => e.target.select()}
-                onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                onChange={(v) => setForm({ ...form, amount: v })}
               />
             </div>
             <div className="form-row">
