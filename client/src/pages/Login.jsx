@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext.jsx';
 
@@ -9,6 +9,16 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // (2026-10-01) api.js endi 401 (token muddati tugagan) holatini shu
+  // yerga, bitta belgi orqali xabar beradi — shunda foydalanuvchi nega
+  // birdan login sahifasiga tushib qolganini tushunadi.
+  useEffect(() => {
+    if (sessionStorage.getItem('posway_session_expired')) {
+      setError('Sessiya muddati tugagan — qaytadan tizimga kiring');
+      sessionStorage.removeItem('posway_session_expired');
+    }
+  }, []);
 
   async function handleSubmit(e) {
     e.preventDefault();
