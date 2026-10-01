@@ -12,6 +12,7 @@ import supplierDebtRoutes from './routes/supplierDebts.js';
 import cashCloseRoutes from './routes/cashCloses.js';
 import stockMovementRoutes from './routes/stockMovements.js';
 import aiExtractRoutes from './routes/aiExtract.js';
+import reminderRoutes from './routes/reminders.js';
 
 dotenv.config();
 
@@ -32,6 +33,7 @@ app.use('/api/supplier-debts', supplierDebtRoutes);
 app.use('/api/cash-closes', cashCloseRoutes);
 app.use('/api/stock-movements', stockMovementRoutes);
 app.use('/api/ai', aiExtractRoutes);
+app.use('/api/reminders', reminderRoutes);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 
