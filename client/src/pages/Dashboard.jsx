@@ -8,9 +8,18 @@ function money(n) {
 export default function Dashboard() {
   const [data, setData] = useState(null);
   const [lowStock, setLowStock] = useState([]);
+  const [error, setError] = useState('');
 
+  // (2026-10-01) Ilgari bu yerdagi xato jimgina yutib yuborilardi
+  // (`.catch(() => {})`), shuning uchun biror muammo bo'lsa (internet
+  // uzilishi, server vaqtincha javob bermasligi va h.k.) sahifa
+  // "Yuklanmoqda..." holatida abadiy osilib qolardi. Token muddati tugashi
+  // holati endi api.js'da markazlashtirilgan (avtomatik login sahifasiga
+  // qaytaradi) — bu yerda esa QOLGAN xatolar uchun aniq xabar + "Qayta
+  // urinish" tugmasi ko'rsatiladi.
   function loadDashboard() {
-    api.dashboard().then(setData).catch(() => {});
+    setError('');
+    api.dashboard().then(setData).catch((err) => setError(err.message || "Ma'lumotlarni yuklab bo'lmadi"));
     api.lowStock().then(setLowStock).catch(() => {});
   }
 
@@ -20,6 +29,17 @@ export default function Dashboard() {
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
   }, []);
+
+  if (error) {
+    return (
+      <div style={{ padding: 24 }}>
+        <div style={{ background: 'rgba(239,68,68,0.15)', color: 'var(--red)', padding: 14, borderRadius: 10, marginBottom: 14, fontWeight: 600 }}>
+          ⚠️ {error}
+        </div>
+        <button className="btn" onClick={loadDashboard}>Qayta urinish</button>
+      </div>
+    );
+  }
 
   if (!data) return <div>Yuklanmoqda...</div>;
 
