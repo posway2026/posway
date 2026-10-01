@@ -4,17 +4,42 @@ function getToken() {
   return localStorage.getItem('posway_token');
 }
 
+// (2026-10-01) Token yaroqsiz yoki muddati tugagan bo'lsa, server HAR DOIM
+// 401 qaytaradi (server/middleware/auth.js). Ilgari hech bir joyda bu holat
+// alohida ushlanmagan edi — natijada masalan Dashboard.jsx kabi sahifalar
+// xatoni jimgina yutib yuborib, "Yuklanmoqda..." holatida ABADIY osilib
+// qolardi, foydalanuvchi esa nima bo'lganini tushunmasdan qolardi. Endi bu
+// yerda — BARCHA so'rovlar uchun bitta joyda — darhol ushlab, eski
+// sessiyani tozalab, login sahifasiga qaytaramiz.
+function handleUnauthorized() {
+  localStorage.removeItem('posway_token');
+  localStorage.removeItem('posway_user');
+  sessionStorage.setItem('posway_session_expired', '1');
+  if (!window.location.pathname.startsWith('/login')) {
+    window.location.href = '/login';
+  }
+}
+
 async function request(path, options = {}) {
   const token = getToken();
-  const res = await fetch(BASE + path, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(BASE + path, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+  } catch {
+    // (2026-10-01) Internet uzilgan yoki server umuman javob bermagan
+    // holatda fetch() o'zi "Failed to fetch" kabi tushunarsiz ingliz xato
+    // beradi — buning o'rniga aniq, o'zbekcha xabar ko'rsatamiz.
+    throw new Error("Internetga ulanishda muammo — qaytadan urinib ko'ring");
+  }
   const data = await res.json().catch(() => ({}));
+  if (res.status === 401) handleUnauthorized();
   if (!res.ok) throw new Error(data.error || "Xatolik yuz berdi");
   return data;
 }
